@@ -1,0 +1,29 @@
+# Binaries
+*.test
+*.exe
+/examples/*/main
+/basic
+
+# Coverage
+coverage/
+*.out
+
+# Benchmarks
+benchmarks.txt
+benchmark_results.txt
+
+# Vendor
+/vendor/
+
+# IDE
+/.idea/
+/.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+__debug_bin*
