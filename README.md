@@ -11,37 +11,36 @@ Production-grade HTTP client for Go with built-in resiliency patterns.
 
 ## Motivation
 
-Después de implementar clientes HTTP con patrones de resiliencia en múltiples proyectos
-de microservicios, identificé un patrón recurrente:
+After building HTTP clients with resiliency patterns across multiple microservice
+projects, a recurring pattern emerged:
 
-1. **La stdlib no es suficiente** - `net/http` es potente pero no incluye retry,
-   circuit breaker ni rate limiting
-2. **Las dependencias son un problema** - Librerías como Resty traen dependencias
-   transitivas que complican auditorías de seguridad y aumentan el tamaño del binario
-3. **Reinventar la rueda es costoso** - Cada equipo termina escribiendo su propio
-   wrapper con bugs sutiles en manejo de contextos, timeouts y connection pooling
+1. **The stdlib is not enough** - `net/http` is powerful but ships no retry,
+   circuit breaker, or rate limiting
+2. **Dependencies are a liability** - Libraries like Resty pull in transitive
+   dependencies that complicate security audits and grow the binary size
+3. **Reinventing the wheel is costly** - Every team ends up writing its own
+   wrapper with subtle bugs in context handling, timeouts, and connection pooling
 
-Esta librería resuelve ese problema: **resiliencia production-ready con cero dependencias**.
+This library solves that: **production-ready resiliency with zero dependencies**.
 
 ### Usage Modes
 
-| Modo | Cuándo usarlo |
-|------|---------------|
-| `go get` | Proyectos que aceptan dependencias externas |
-| Copiar a `pkg/rhttp` | Políticas estrictas de zero-deps, vendor everything |
+| Mode | When to use it |
+|------|----------------|
+| `go get` | Projects that accept external dependencies |
+| Copy into `pkg/rhttp` | Strict zero-deps policies, vendor everything |
 
-El código está diseñado para funcionar en ambos escenarios sin modificaciones.
+The code is designed to work in both scenarios without modification.
 
 ## Features
 
 - **Zero dependencies** - Only Go standard library
-- **Faster than net/http** - 35% faster than `http.Client` baseline
+- **Low overhead** - The full middleware stack adds ~1 μs per request
 - **Middleware architecture** - Composable, testable, extensible
 - **Fluent API** - Resty-style request builder
 - **Resiliency patterns** - Retry, circuit breaker, rate limiting, timeout
 - **Multiple backoff strategies** - Constant, linear, exponential, Fibonacci, jitter variants
-- **Object pooling** - Reduced allocations via `sync.Pool`
-- **100% test coverage** - 101 tests
+- **Well tested** - Race-clean suite; live coverage in the Codecov badge above
 
 ## Installation
 
@@ -98,14 +97,14 @@ func main() {
 client := rhttp.New()
 
 // GET request with query params
-resp, err := rhttp.R(client).
+resp, err := client.R().
     SetHeader("Authorization", "Bearer token").
     SetQueryParam("page", "1").
     SetQueryParam("limit", "10").
     Get("https://api.example.com/users")
 
 // POST request with JSON body
-resp, err := rhttp.R(client).
+resp, err := client.R().
     SetAuthToken("my-token").
     SetBodyJSON(map[string]string{
         "name":  "John",
@@ -114,7 +113,7 @@ resp, err := rhttp.R(client).
     Post("https://api.example.com/users")
 
 // Path parameters
-resp, err := rhttp.R(client).
+resp, err := client.R().
     SetPathParam("org", "acme").
     SetPathParam("repo", "api").
     Get("https://api.github.com/repos/{org}/{repo}")
@@ -161,7 +160,8 @@ client := rhttp.New(
 | `ExponentialBackoffEqualJitter(base, max)` | `base * 2^attempt / 2 + random(0, half)` |
 | `DecorrelatedJitterBackoff(base, max)` | AWS-style decorrelated jitter |
 
-Composable with `WithJitter()`, `WithMin()`, `WithMax()`.
+Composable with `WithJitter()`, `WithMin()`, `WithMax()`, and `WithRetryAfter()`
+(honors the `Retry-After` header on 429/503 responses).
 
 ### Circuit Breaker
 
@@ -196,9 +196,6 @@ client := rhttp.New(
         }),
     ),
 )
-
-// Per-host rate limiting
-perHostLimiter := rhttp.NewPerHostRateLimiter(50, 5) // 50 req/s per host
 ```
 
 ### Logging
@@ -236,6 +233,22 @@ client := rhttp.New(
 
 `MetricEvent` fields: `Method`, `Host`, `Path`, `StatusCode`, `Duration`, `BytesSent`, `BytesReceived`, `Error`, `Success`
 
+#### Path cardinality
+
+Exporting a raw request path (`/users/8f3a.../orders/2941`) as a metrics label creates one time series per ID, which grows Prometheus memory without bound. To prevent this, `Path` is **empty by default** and is only populated when you provide a `PathNormalizer` that collapses high-cardinality segments to a template:
+
+```go
+rhttp.Metrics(rhttp.MetricsConfig{
+    Recorder: recorder,
+    PathNormalizer: func(p string) string {
+        // /users/8f3a/orders/2941 -> /users/:id/orders/:id
+        return idSegment.ReplaceAllString(p, "/:id")
+    },
+})
+```
+
+To emit the raw path anyway (not recommended as a metrics label), use `func(p string) string { return p }`.
+
 ## Error Classification
 
 ```go
@@ -267,7 +280,7 @@ if err != nil {
 
 ## Middleware Order
 
-Middleware executes in the order specified:
+The **first middleware in the list is the outermost**: it runs first on the way in and last on the way out. Each subsequent middleware wraps the ones after it, and the transport sits at the center.
 
 ```go
 client := rhttp.New(
@@ -276,13 +289,31 @@ client := rhttp.New(
         rhttp.Metrics(...),        // 2. Start timing
         rhttp.Timeout(...),        // 3. Apply timeout
         rhttp.RateLimit(...),      // 4. Check rate limit
-        rhttp.CircuitBreaker(...), // 5. Check circuit
-        rhttp.Retry(...),          // 6. Retry on failure
+        rhttp.Retry(...),          // 5. Retry on failure
+        rhttp.CircuitBreaker(...), // 6. Check circuit per attempt
     ),
 )
 ```
 
-Recommended order: `Logging → Metrics → Timeout → RateLimit → CircuitBreaker → Retry`
+Recommended order: `Logging → Metrics → Timeout → RateLimit → Retry → CircuitBreaker`
+
+### Timeout placement changes its meaning
+
+Where you put `Timeout` relative to `Retry` selects one of two semantics — both valid, but very different:
+
+| Pattern | Order | Meaning |
+|---------|-------|---------|
+| **Total budget** | `Timeout → Retry` | The timeout covers **all attempts and their backoffs combined**. Once it expires, no further retries happen. |
+| **Per-attempt timeout** | `Retry → Timeout` | Each attempt gets its **own fresh timeout**; the total wall-clock time is roughly `attempts × timeout` plus backoffs. |
+
+See the runnable `ExampleRetry_totalBudget` and `ExampleRetry_perAttemptTimeout` for both wirings.
+
+### Retry vs CircuitBreaker
+
+| Order | Effect |
+|-------|--------|
+| `Retry → CircuitBreaker` (retry outer) **— recommended** | Each attempt consults the circuit; a tripped breaker short-circuits the remaining attempts. The circuit counts every attempt. |
+| `CircuitBreaker → Retry` (breaker outer) | The circuit sees one fully-retried request as a single call; retries are not individually gated by the breaker. |
 
 ## Custom Transport
 
@@ -300,39 +331,67 @@ client := rhttp.New(
 transport := rhttp.DefaultTransport() // HTTP/2 enabled, optimized pool
 ```
 
-## Object Pooling
-
-Reduce allocations with buffer pooling:
-
-```go
-// Get a buffer from the pool
-buf := rhttp.GetBuffer()
-defer rhttp.PutBuffer(buf)
-
-buf.WriteString("request body")
-```
-
 ## Benchmarks
 
-```
-goos: linux
-goarch: amd64
-cpu: Intel Core i7-1255U
+Two suites, measured 2026-07-25 on linux/amd64 (Intel Core i7-1255U, Go 1.24):
+the in-repo microbenchmarks (`make bench`) measure client and middleware
+overhead against a no-op transport, and a standalone comparison harness
+([`benchmarks/`](benchmarks/), `make report`) measures rhttp against Resty
+v2.17.2, go-retryablehttp v0.7.8 and Heimdall v7.0.3 with equivalent
+configuration (5s timeout, 3 attempts, exponential backoff 100ms-2s).
 
-BenchmarkClient_Baseline-12               235 ns/op    656 B/op    4 allocs/op
-BenchmarkStdHttpClient_Baseline-12        317 ns/op    600 B/op    7 allocs/op  (+35%)
-BenchmarkClient_WithRetry-12              265 ns/op    656 B/op    4 allocs/op
-BenchmarkClient_WithCircuitBreaker-12     271 ns/op    656 B/op    4 allocs/op
-BenchmarkClient_AllMiddleware-12         1143 ns/op   1472 B/op   12 allocs/op
-BenchmarkTokenBucket_TryAcquire-12         52 ns/op      0 B/op    0 allocs/op
-BenchmarkBackoff_Exponential-12             7 ns/op      0 B/op    0 allocs/op
+### Middleware overhead (no network)
+
+Minimum of 5 runs:
+
+```
+BenchmarkMiddlewareOverhead_Baseline-12            240 ns/op    656 B/op    4 allocs/op
+BenchmarkMiddlewareOverhead_WithRetry-12           272 ns/op    656 B/op    4 allocs/op
+BenchmarkMiddlewareOverhead_WithCircuitBreaker-12  266 ns/op    656 B/op    4 allocs/op
+BenchmarkMiddlewareOverhead_AllMiddleware-12      1030 ns/op   1589 B/op   13 allocs/op
+BenchmarkStdHttpClient_Baseline-12                 256 ns/op    552 B/op    5 allocs/op
+BenchmarkTokenBucket_TryAcquire-12                  48 ns/op      0 B/op    0 allocs/op
+BenchmarkBackoffStrategies/Exponential-12            8 ns/op      0 B/op    0 allocs/op
 ```
 
-**Key results:**
-- 35% faster than `net/http` client baseline
-- All middleware stack: ~1μs overhead (negligible vs network latency)
-- Rate limiter: 52ns per check, zero allocations
-- Backoff strategies: <10ns, zero allocations
+- Full middleware stack: ~1 μs and ~1.5 KB per request — negligible against network latency (0.5–500 ms)
+- Rate limiter: 48 ns per check, zero allocations
+- Backoff strategies: <10 ns, zero allocations
+
+### Comparison with other clients
+
+Wrapper overhead (no-op transport, timeout + 3-attempt retry configured everywhere, min of 5 runs):
+
+| Client | ns/op | allocs/op | vs best |
+|---|---:|---:|---:|
+| rhttp (Timeout+Retry) | 910 | 12 | 1.00x |
+| rhttp (Timeout+Retry+CircuitBreaker) | 946 | 12 | 1.04x |
+| net/http (Timeout only, no retry) | 1750 | 26 | 1.92x |
+| go-retryablehttp | 1775 | 26 | 1.95x |
+| Heimdall (retry) | 2555 | 32 | 2.81x |
+| Resty (retry) | 5818 | 48 | 6.39x |
+
+End-to-end (~1 KB JSON over loopback):
+
+| Client | ns/op | allocs/op | vs best |
+|---|---:|---:|---:|
+| go-retryablehttp | 58309 | 74 | 1.00x |
+| net/http (Timeout only, no retry) | 60995 | 75 | 1.05x |
+| Heimdall (retry) | 61009 | 80 | 1.05x |
+| rhttp (Timeout+Retry) | 61923 | 76 | 1.06x |
+| rhttp (Timeout+Retry+CircuitBreaker) | 62817 | 76 | 1.08x |
+| Resty (retry) | 71696 | 96 | 1.23x |
+
+**Read the caveats before quoting these numbers:**
+
+- All clients are configured equivalently and fully consume and close each response body.
+- `net/http` does not retry: it is the floor, not a symmetric competitor.
+- Heimdall runs without its Hystrix circuit breaker (retry only, for feature symmetry).
+- Resty buffers the full response body by design.
+- Loopback amplifies relative overhead: against a real network (0.5-500 ms per
+  request) every client in the table performs the same for practical purposes.
+
+Full methodology and reproduction steps: [`benchmarks/REPORT.md`](benchmarks/REPORT.md).
 
 ## Design Principles
 
@@ -413,7 +472,6 @@ All PRs must pass CI checks before merging.
 - [x] **Metrics middleware** - Pluggable `MetricsRecorder` interface
 - [x] **Error classification** - Timeout, connection, DNS, TLS, temporary
 - [x] **Fluent API** - Resty-style `RequestBuilder`
-- [x] **Object pooling** - Reduced allocations via `sync.Pool`
 - [x] **Zero dependencies** - Only Go standard library
 
 ### Phase 2: Advanced Resiliency

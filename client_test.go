@@ -6,11 +6,10 @@ import (
 	"testing"
 
 	"github.com/oswaldom-code/rhttp"
-	"github.com/oswaldom-code/rhttp/internal"
 )
 
 func TestClient_Do(t *testing.T) {
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Request:    req,
@@ -43,20 +42,20 @@ func TestClient_MiddlewareChain(t *testing.T) {
 	var order []int
 
 	mw1 := func(next http.RoundTripper) http.RoundTripper {
-		return internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 			order = append(order, 1)
 			return next.RoundTrip(req)
 		})
 	}
 
 	mw2 := func(next http.RoundTripper) http.RoundTripper {
-		return internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 			order = append(order, 2)
 			return next.RoundTrip(req)
 		})
 	}
 
-	base := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	base := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		order = append(order, 0)
 		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 	})
@@ -72,5 +71,21 @@ func TestClient_MiddlewareChain(t *testing.T) {
 	// mw1 should execute first, then mw2, then base
 	if len(order) != 3 || order[0] != 1 || order[1] != 2 || order[2] != 0 {
 		t.Fatalf("unexpected middleware order: %v", order)
+	}
+}
+
+func TestDo_NilContextDoesNotPanic(t *testing.T) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+	})
+	c := rhttp.New(rhttp.WithTransport(rt))
+
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	resp, err := c.Do(nil, req) //nolint:staticcheck // nil ctx is the case under test
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 }

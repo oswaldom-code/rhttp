@@ -7,12 +7,11 @@ import (
 	"time"
 
 	"github.com/oswaldom-code/rhttp"
-	"github.com/oswaldom-code/rhttp/internal"
 )
 
 // noopRoundTripper returns immediately with a 200 OK response.
 // This isolates the benchmark to measure only client/middleware overhead.
-var noopRoundTripper = internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+var noopRoundTripper = rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Body:       http.NoBody,
@@ -26,7 +25,7 @@ var noopLogger = rhttp.LoggerFunc(func(rhttp.LogEntry) {})
 // noopRecorder discards all metric events
 var noopRecorder = rhttp.MetricsRecorderFunc(func(rhttp.MetricEvent) {})
 
-func BenchmarkClient_Baseline(b *testing.B) {
+func BenchmarkMiddlewareOverhead_Baseline(b *testing.B) {
 	c := rhttp.New(rhttp.WithTransport(noopRoundTripper))
 	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
 	ctx := context.Background()
@@ -39,7 +38,7 @@ func BenchmarkClient_Baseline(b *testing.B) {
 	}
 }
 
-func BenchmarkClient_WithTimeout(b *testing.B) {
+func BenchmarkMiddlewareOverhead_WithTimeout(b *testing.B) {
 	c := rhttp.New(
 		rhttp.WithTransport(noopRoundTripper),
 		rhttp.WithMiddleware(rhttp.Timeout(5*time.Second)),
@@ -55,7 +54,7 @@ func BenchmarkClient_WithTimeout(b *testing.B) {
 	}
 }
 
-func BenchmarkClient_WithRetry(b *testing.B) {
+func BenchmarkMiddlewareOverhead_WithRetry(b *testing.B) {
 	c := rhttp.New(
 		rhttp.WithTransport(noopRoundTripper),
 		rhttp.WithMiddleware(rhttp.Retry(rhttp.RetryConfig{
@@ -73,7 +72,7 @@ func BenchmarkClient_WithRetry(b *testing.B) {
 	}
 }
 
-func BenchmarkClient_WithCircuitBreaker(b *testing.B) {
+func BenchmarkMiddlewareOverhead_WithCircuitBreaker(b *testing.B) {
 	c := rhttp.New(
 		rhttp.WithTransport(noopRoundTripper),
 		rhttp.WithMiddleware(rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
@@ -92,7 +91,7 @@ func BenchmarkClient_WithCircuitBreaker(b *testing.B) {
 	}
 }
 
-func BenchmarkClient_WithLogging(b *testing.B) {
+func BenchmarkMiddlewareOverhead_WithLogging(b *testing.B) {
 	c := rhttp.New(
 		rhttp.WithTransport(noopRoundTripper),
 		rhttp.WithMiddleware(rhttp.Logging(rhttp.LoggingConfig{
@@ -110,7 +109,7 @@ func BenchmarkClient_WithLogging(b *testing.B) {
 	}
 }
 
-func BenchmarkClient_WithMetrics(b *testing.B) {
+func BenchmarkMiddlewareOverhead_WithMetrics(b *testing.B) {
 	c := rhttp.New(
 		rhttp.WithTransport(noopRoundTripper),
 		rhttp.WithMiddleware(rhttp.Metrics(rhttp.MetricsConfig{
@@ -128,7 +127,7 @@ func BenchmarkClient_WithMetrics(b *testing.B) {
 	}
 }
 
-func BenchmarkClient_AllMiddleware(b *testing.B) {
+func BenchmarkMiddlewareOverhead_AllMiddleware(b *testing.B) {
 	c := rhttp.New(
 		rhttp.WithTransport(noopRoundTripper),
 		rhttp.WithMiddleware(
@@ -153,7 +152,7 @@ func BenchmarkClient_AllMiddleware(b *testing.B) {
 	}
 }
 
-func BenchmarkClient_Parallel(b *testing.B) {
+func BenchmarkMiddlewareOverhead_Parallel(b *testing.B) {
 	c := rhttp.New(
 		rhttp.WithTransport(noopRoundTripper),
 		rhttp.WithMiddleware(

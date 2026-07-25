@@ -51,11 +51,11 @@ func ExampleNew_withMiddleware() {
 	fmt.Println("Status:", resp.StatusCode)
 }
 
-func ExampleR() {
+func ExampleClient_R() {
 	client := rhttp.New()
 
 	// Use the fluent API to build and execute requests
-	resp, err := rhttp.R(client).
+	resp, err := client.R().
 		SetHeader("Authorization", "Bearer token").
 		SetQueryParam("page", "1").
 		Get("https://api.example.com/users")
@@ -79,7 +79,7 @@ func ExampleRequestBuilder_SetBodyJSON() {
 
 	user := User{Name: "John", Email: "john@example.com"}
 
-	resp, err := rhttp.R(client).
+	resp, err := client.R().
 		SetBodyJSON(user).
 		Post("https://api.example.com/users")
 
@@ -96,7 +96,7 @@ func ExampleRequestBuilder_SetPathParam() {
 	client := rhttp.New()
 
 	// Path parameters are replaced in the URL template
-	resp, err := rhttp.R(client).
+	resp, err := client.R().
 		SetPathParam("id", "123").
 		Get("https://api.example.com/users/{id}")
 
@@ -131,9 +131,9 @@ func ExampleExponentialBackoff() {
 	backoff := rhttp.ExponentialBackoff(100*time.Millisecond, 10*time.Second)
 
 	// Backoff durations increase exponentially with jitter
-	fmt.Println("Attempt 0:", backoff(0)) // ~100ms
-	fmt.Println("Attempt 1:", backoff(1)) // ~200ms
-	fmt.Println("Attempt 2:", backoff(2)) // ~400ms
+	fmt.Println("Attempt 0:", backoff(0, nil)) // ~100ms
+	fmt.Println("Attempt 1:", backoff(1, nil)) // ~200ms
+	fmt.Println("Attempt 2:", backoff(2, nil)) // ~400ms
 }
 
 func ExampleNewTokenBucket() {
@@ -186,13 +186,76 @@ func ExampleLogging() {
 	_ = client // Use client for requests
 }
 
-func ExampleGetBuffer() {
-	// Get a buffer from the pool
-	buf := rhttp.GetBuffer()
+func ExampleRetry_totalBudget() {
+	client := rhttp.New(
+		rhttp.WithMiddleware(
+			rhttp.Timeout(5*time.Second),
+			rhttp.Retry(rhttp.RetryConfig{
+				MaxAttempts: 3,
+				Backoff:     rhttp.ExponentialBackoff(100*time.Millisecond, 2*time.Second),
+			}),
+			rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
+				FailureThreshold: 5,
+				ResetTimeout:     30 * time.Second,
+			}),
+		),
+	)
 
-	// Use the buffer
-	buf.WriteString("Hello, World!")
+	req, _ := http.NewRequest("GET", "https://api.example.com/users", http.NoBody)
+	resp, err := client.Do(context.Background(), req)
+	if err != nil {
+		fmt.Println("request failed:", err)
+		return
+	}
+	defer resp.Body.Close()
 
-	// Return to pool when done
-	rhttp.PutBuffer(buf)
+	fmt.Println("Status:", resp.StatusCode)
+}
+
+func ExampleRetry_perAttemptTimeout() {
+	client := rhttp.New(
+		rhttp.WithMiddleware(
+			rhttp.Retry(rhttp.RetryConfig{
+				MaxAttempts: 3,
+				Backoff:     rhttp.ExponentialBackoff(100*time.Millisecond, 2*time.Second),
+			}),
+			rhttp.Timeout(2*time.Second),
+			rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
+				FailureThreshold: 5,
+				ResetTimeout:     30 * time.Second,
+			}),
+		),
+	)
+
+	req, _ := http.NewRequest("GET", "https://api.example.com/users", http.NoBody)
+	resp, err := client.Do(context.Background(), req)
+	if err != nil {
+		fmt.Println("request failed:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	fmt.Println("Status:", resp.StatusCode)
+}
+
+func ExampleRoundTripperFunc() {
+	// A custom middleware is a function over RoundTripperFunc: five lines.
+	withRequestID := func(next http.RoundTripper) http.RoundTripper {
+		return rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			req.Header.Set("X-Request-ID", "abc-123")
+			return next.RoundTrip(req)
+		})
+	}
+
+	client := rhttp.New(rhttp.WithMiddleware(withRequestID))
+
+	req, _ := http.NewRequest("GET", "https://api.example.com/users", http.NoBody)
+	resp, err := client.Do(context.Background(), req)
+	if err != nil {
+		fmt.Println("request failed:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	fmt.Println("Status:", resp.StatusCode)
 }

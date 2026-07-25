@@ -3,10 +3,11 @@ package rhttp
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
 	"net/url"
-	"strings"
+	"syscall"
 )
 
 // ErrorKind represents the category of an HTTP client error.
@@ -30,9 +31,6 @@ const (
 
 	// ErrKindTLS indicates a TLS/SSL error.
 	ErrKindTLS
-
-	// ErrKindTemporary indicates a temporary error that may resolve on retry.
-	ErrKindTemporary
 )
 
 // String returns a human-readable name for the error kind.
@@ -48,8 +46,6 @@ func (k ErrorKind) String() string {
 		return "dns"
 	case ErrKindTLS:
 		return "tls"
-	case ErrKindTemporary:
-		return "temporary"
 	default:
 		return "unknown"
 	}
@@ -58,7 +54,7 @@ func (k ErrorKind) String() string {
 // IsRetryable returns true if the error kind is typically safe to retry.
 func (k ErrorKind) IsRetryable() bool {
 	switch k {
-	case ErrKindTimeout, ErrKindConnection, ErrKindDNS, ErrKindTemporary:
+	case ErrKindTimeout, ErrKindConnection, ErrKindDNS:
 		return true
 	default:
 		return false
@@ -97,13 +93,53 @@ func Classify(err error) *ClassifiedError {
 	}
 }
 
-//nolint:gocognit,gocyclo // error classification inherently requires multiple checks
+func classifyTLS(err error) ErrorKind {
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return ErrKindTLS
+	}
+
+	var unknownAuthErr x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthErr) {
+		return ErrKindTLS
+	}
+
+	var invalidCertErr x509.CertificateInvalidError
+	if errors.As(err, &invalidCertErr) {
+		return ErrKindTLS
+	}
+
+	var hostnameErr x509.HostnameError
+	if errors.As(err, &hostnameErr) {
+		return ErrKindTLS
+	}
+
+	return ErrKindUnknown
+}
+
+func classifyConnection(err error) ErrorKind {
+	if errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ENETUNREACH) {
+		return ErrKindConnection
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if opErr.Op == "dial" || opErr.Op == "read" || opErr.Op == "write" {
+			return ErrKindConnection
+		}
+	}
+
+	return ErrKindUnknown
+}
+
 func classifyError(err error) ErrorKind {
 	if err == nil {
 		return ErrKindUnknown
 	}
 
-	// Check for context errors first
 	if errors.Is(err, context.DeadlineExceeded) {
 		return ErrKindTimeout
 	}
@@ -111,69 +147,31 @@ func classifyError(err error) ErrorKind {
 		return ErrKindCanceled
 	}
 
-	// Check for URL errors (often wrap other errors)
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {
 		if urlErr.Timeout() {
 			return ErrKindTimeout
 		}
-		// Classify the wrapped error
 		if urlErr.Err != nil {
 			return classifyError(urlErr.Err)
 		}
 	}
 
-	// Check for network errors
 	var netErr net.Error
-	if errors.As(err, &netErr) {
-		if netErr.Timeout() {
-			return ErrKindTimeout
-		}
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return ErrKindTimeout
 	}
 
-	// Check for DNS errors
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
 		return ErrKindDNS
 	}
 
-	// Check for operation errors (connection refused, etc.)
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
-		if opErr.Timeout() {
-			return ErrKindTimeout
-		}
-		// Connection errors
-		if opErr.Op == "dial" || opErr.Op == "read" || opErr.Op == "write" {
-			return ErrKindConnection
-		}
+	if kind := classifyTLS(err); kind != ErrKindUnknown {
+		return kind
 	}
 
-	// Check for TLS errors
-	var tlsErr *tls.CertificateVerificationError
-	if errors.As(err, &tlsErr) {
-		return ErrKindTLS
-	}
-
-	// Check error message for common patterns
-	errMsg := strings.ToLower(err.Error())
-	if strings.Contains(errMsg, "connection refused") ||
-		strings.Contains(errMsg, "connection reset") ||
-		strings.Contains(errMsg, "no route to host") ||
-		strings.Contains(errMsg, "network is unreachable") {
-		return ErrKindConnection
-	}
-	if strings.Contains(errMsg, "tls") ||
-		strings.Contains(errMsg, "certificate") ||
-		strings.Contains(errMsg, "x509") {
-		return ErrKindTLS
-	}
-	if strings.Contains(errMsg, "no such host") ||
-		strings.Contains(errMsg, "lookup") {
-		return ErrKindDNS
-	}
-
-	return ErrKindUnknown
+	return classifyConnection(err)
 }
 
 // IsTimeout returns true if the error is a timeout error.

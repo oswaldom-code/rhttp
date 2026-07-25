@@ -1,4 +1,4 @@
-.PHONY: help test test-race test-coverage coverage-summary bench lint fmt vet docs check clean install-tools
+.PHONY: help test test-race test-short test-coverage coverage-summary bench bench-compare lint fmt fmt-check vet docs check check-all clean install-tools deps ci version info
 
 .DEFAULT_GOAL := help
 
@@ -49,7 +49,7 @@ test-coverage:
 	@echo ""
 	@echo "$(GREEN)Coverage report generated: $(COVERAGE_HTML)$(NC)"
 
-coverage-summary:
+coverage-summary: test-coverage
 	@echo "$(GREEN)=== Total Coverage ===$(NC)"
 	@$(GOCMD) tool cover -func=$(COVERAGE_FILE) | tail -1
 	@echo ""
@@ -62,7 +62,7 @@ test-short:
 
 bench:
 	@echo "$(GREEN)Running benchmarks...$(NC)"
-	$(GOTEST) -bench=. -benchmem $(PACKAGES)
+	$(GOTEST) -bench=. -benchmem -count=5 $(PACKAGES)
 
 bench-compare:
 	@echo "$(GREEN)Running benchmarks for comparison...$(NC)"
@@ -121,6 +121,10 @@ install-tools:
 	@echo "Installing pkgsite..."
 	go install golang.org/x/pkgsite/cmd/pkgsite@latest
 	@echo "$(GREEN)Done! Make sure $(GOPATH)/bin is in your PATH.$(NC)"
+
+deps:
+	@echo "$(GREEN)Downloading dependencies...$(NC)"
+	$(GOMOD) download
 
 ci: deps fmt-check vet lint test-race
 	@echo "$(GREEN)CI pipeline passed!$(NC)"

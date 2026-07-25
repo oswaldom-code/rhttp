@@ -50,8 +50,8 @@ func main() {
 	customHeaders(client)
 }
 
-func simpleGet(client rhttp.Client) {
-	resp, err := rhttp.R(client).
+func simpleGet(client *rhttp.Client) {
+	resp, err := client.R().
 		Get("https://httpbin.org/get")
 	if err != nil {
 		log.Printf("Error: %v", err)
@@ -63,8 +63,8 @@ func simpleGet(client rhttp.Client) {
 	printBody(resp.Body)
 }
 
-func getWithQueryParams(client rhttp.Client) {
-	resp, err := rhttp.R(client).
+func getWithQueryParams(client *rhttp.Client) {
+	resp, err := client.R().
 		SetQueryParam("page", "1").
 		SetQueryParam("limit", "10").
 		SetQueryParams(map[string]string{
@@ -82,14 +82,14 @@ func getWithQueryParams(client rhttp.Client) {
 	printBody(resp.Body)
 }
 
-func postJSON(client rhttp.Client) {
+func postJSON(client *rhttp.Client) {
 	payload := map[string]any{
 		"name": "rhttp",
 		"type": "library",
 		"tags": []string{"http", "resilience", "go"},
 	}
 
-	resp, err := rhttp.R(client).
+	resp, err := client.R().
 		SetBodyJSON(payload).
 		Post("https://httpbin.org/post")
 	if err != nil {
@@ -102,9 +102,9 @@ func postJSON(client rhttp.Client) {
 	printBody(resp.Body)
 }
 
-func pathParams(client rhttp.Client) {
+func pathParams(client *rhttp.Client) {
 	// Simulates: GET /users/123/posts/456
-	resp, err := rhttp.R(client).
+	resp, err := client.R().
 		SetPathParam("userId", "123").
 		SetPathParam("postId", "456").
 		Get("https://httpbin.org/anything/users/{userId}/posts/{postId}")
@@ -118,11 +118,11 @@ func pathParams(client rhttp.Client) {
 	printBody(resp.Body)
 }
 
-func customHeaders(client rhttp.Client) {
+func customHeaders(client *rhttp.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	resp, err := rhttp.R(client).
+	resp, err := client.R().
 		Context(ctx).
 		SetHeader("X-Custom-Header", "custom-value").
 		SetHeader("X-Request-ID", "req-12345").

@@ -5,17 +5,14 @@ import (
 	"net/http"
 )
 
-// Client defines the interface for executing HTTP requests.
-type Client interface {
-	Do(ctx context.Context, req *http.Request) (*http.Response, error)
-}
-
-type client struct {
+// Client executes HTTP requests through the configured middleware chain.
+// It is safe for concurrent use by multiple goroutines.
+type Client struct {
 	rt http.RoundTripper
 }
 
 // New creates a new Client with the given options.
-func New(opts ...Option) Client {
+func New(opts ...Option) *Client {
 	cfg := defaultConfig()
 	for _, opt := range opts {
 		opt(cfg)
@@ -30,13 +27,16 @@ func New(opts ...Option) Client {
 		rt = chain(rt, cfg.middleware...)
 	}
 
-	return &client{rt: rt}
+	return &Client{rt: rt}
 }
 
 // Do executes the request with the configured middleware chain.
-func (c *client) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
+func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
 	if req == nil {
 		return nil, ErrInvalidRequest
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	req = req.Clone(ctx)

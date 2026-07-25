@@ -14,8 +14,13 @@ import (
 )
 
 // RequestBuilder provides a fluent interface for building HTTP requests.
+//
+// A builder is meant for a single request and is not safe for concurrent use.
+// Bodies set from bytes (SetBodyBytes, SetBodyString, SetBodyJSON, SetBodyXML,
+// SetBodyForm) survive re-execution; a body set from a reader via SetBody is
+// consumed by the first execution.
 type RequestBuilder struct {
-	client      Client
+	client      *Client
 	ctx         context.Context
 	method      string
 	url         string
@@ -28,30 +33,13 @@ type RequestBuilder struct {
 	err         error
 }
 
-// R creates a new RequestBuilder.
-func (c *client) R() *RequestBuilder {
+// R creates a new RequestBuilder bound to the client.
+// Query and path parameter maps are initialized lazily on first use.
+func (c *Client) R() *RequestBuilder {
 	return &RequestBuilder{
-		client:      c,
-		ctx:         context.Background(),
-		headers:     make(http.Header),
-		queryParams: make(url.Values),
-		pathParams:  make(map[string]string),
-	}
-}
-
-// R creates a new RequestBuilder from a Client interface.
-// Returns nil if the client doesn't support RequestBuilder.
-func R(c Client) *RequestBuilder {
-	if rc, ok := c.(interface{ R() *RequestBuilder }); ok {
-		return rc.R()
-	}
-	// Fallback: create a basic builder
-	return &RequestBuilder{
-		client:      c,
-		ctx:         context.Background(),
-		headers:     make(http.Header),
-		queryParams: make(url.Values),
-		pathParams:  make(map[string]string),
+		client:  c,
+		ctx:     context.Background(),
+		headers: make(http.Header),
 	}
 }
 
@@ -113,14 +101,22 @@ func (rb *RequestBuilder) SetBasicAuth(username, password string) *RequestBuilde
 	return rb
 }
 
+func (rb *RequestBuilder) ensureQueryParams() {
+	if rb.queryParams == nil {
+		rb.queryParams = make(url.Values)
+	}
+}
+
 // SetQueryParam sets a single query parameter.
 func (rb *RequestBuilder) SetQueryParam(key, value string) *RequestBuilder {
+	rb.ensureQueryParams()
 	rb.queryParams.Set(key, value)
 	return rb
 }
 
 // SetQueryParams sets multiple query parameters from a map.
 func (rb *RequestBuilder) SetQueryParams(params map[string]string) *RequestBuilder {
+	rb.ensureQueryParams()
 	for k, v := range params {
 		rb.queryParams.Set(k, v)
 	}
@@ -129,19 +125,28 @@ func (rb *RequestBuilder) SetQueryParams(params map[string]string) *RequestBuild
 
 // AddQueryParam adds a query parameter (allows multiple values for same key).
 func (rb *RequestBuilder) AddQueryParam(key, value string) *RequestBuilder {
+	rb.ensureQueryParams()
 	rb.queryParams.Add(key, value)
 	return rb
+}
+
+func (rb *RequestBuilder) ensurePathParams() {
+	if rb.pathParams == nil {
+		rb.pathParams = make(map[string]string)
+	}
 }
 
 // SetPathParam sets a path parameter to be replaced in the URL.
 // Example: SetPathParam("id", "123") replaces {id} in "/users/{id}".
 func (rb *RequestBuilder) SetPathParam(key, value string) *RequestBuilder {
+	rb.ensurePathParams()
 	rb.pathParams[key] = value
 	return rb
 }
 
 // SetPathParams sets multiple path parameters from a map.
 func (rb *RequestBuilder) SetPathParams(params map[string]string) *RequestBuilder {
+	rb.ensurePathParams()
 	for k, v := range params {
 		rb.pathParams[k] = v
 	}
@@ -149,6 +154,10 @@ func (rb *RequestBuilder) SetPathParams(params map[string]string) *RequestBuilde
 }
 
 // SetBody sets the request body from a reader.
+//
+// The reader is buffered up to 10 MB so the body can be rewound and the request
+// retried. If the body exceeds 10 MB it is streamed instead: the request is sent
+// once and is not retried, since the reader cannot be replayed.
 func (rb *RequestBuilder) SetBody(body io.Reader) *RequestBuilder {
 	rb.body = body
 	return rb
@@ -254,6 +263,36 @@ func (rb *RequestBuilder) Execute(method, url string) (*http.Response, error) {
 	return rb.execute()
 }
 
+const maxBufferBytes = 10 << 20
+
+func bufferBody(r io.Reader) ([]byte, io.Reader, error) {
+	buf, err := io.ReadAll(io.LimitReader(r, maxBufferBytes+1))
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(buf) > maxBufferBytes {
+		return nil, io.MultiReader(bytes.NewReader(buf), r), nil
+	}
+	return buf, nil, nil
+}
+
+func (rb *RequestBuilder) resolveBody() (io.Reader, []byte, error) {
+	if rb.body == nil {
+		return nil, rb.bodyBytes, nil
+	}
+	if rb.bodyBytes != nil {
+		return bytes.NewReader(rb.bodyBytes), rb.bodyBytes, nil
+	}
+	buf, stream, err := bufferBody(rb.body)
+	if err != nil {
+		return nil, nil, err
+	}
+	if stream != nil {
+		return stream, nil, nil
+	}
+	return bytes.NewReader(buf), buf, nil
+}
+
 func (rb *RequestBuilder) execute() (*http.Response, error) {
 	if rb.err != nil {
 		return nil, rb.err
@@ -275,9 +314,9 @@ func (rb *RequestBuilder) execute() (*http.Response, error) {
 	}
 
 	// Create body reader
-	var bodyReader io.Reader
-	if rb.body != nil {
-		bodyReader = rb.body
+	bodyReader, bodyBytes, err := rb.resolveBody()
+	if err != nil {
+		return nil, err
 	}
 
 	// Create request
@@ -287,29 +326,34 @@ func (rb *RequestBuilder) execute() (*http.Response, error) {
 	}
 
 	// Set GetBody for retry support
-	if rb.bodyBytes != nil {
+	if bodyBytes != nil {
 		req.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(rb.bodyBytes)), nil
+			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
 		}
-		req.ContentLength = int64(len(rb.bodyBytes))
+		req.ContentLength = int64(len(bodyBytes))
 	}
 
-	// Apply headers
-	for k, vals := range rb.headers {
-		for _, v := range vals {
-			req.Header.Add(k, v)
-		}
-	}
+	// Client.Do clones the request, so sharing the builder's header map is safe.
+	req.Header = rb.headers
 
 	// Apply timeout
 	ctx := rb.ctx
-	if rb.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, rb.timeout)
-		defer cancel()
+	if rb.timeout <= 0 {
+		return rb.client.Do(ctx, req)
 	}
 
-	return rb.client.Do(ctx, req)
+	ctx, cancel := context.WithTimeout(ctx, rb.timeout)
+	resp, err := rb.client.Do(ctx, req)
+	if err != nil {
+		cancel()
+		return resp, err
+	}
+	if resp.Body == nil {
+		cancel()
+		return resp, nil
+	}
+	resp.Body = &cancelBody{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
 }
 
 // basicAuth encodes username and password for Basic authentication.

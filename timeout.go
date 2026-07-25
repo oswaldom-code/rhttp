@@ -9,7 +9,13 @@ import (
 
 // Timeout returns a middleware that applies a timeout to requests.
 // If the request's context already has a shorter deadline, it is respected.
+// A non-positive duration disables the middleware (it becomes a no-op).
 func Timeout(d time.Duration) Middleware {
+	if d <= 0 {
+		return func(next http.RoundTripper) http.RoundTripper {
+			return next
+		}
+	}
 	return func(next http.RoundTripper) http.RoundTripper {
 		return timeoutRoundTripper{next: next, timeout: d}
 	}

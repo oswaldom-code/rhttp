@@ -4,18 +4,19 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/oswaldom-code/rhttp"
-	"github.com/oswaldom-code/rhttp/internal"
 )
 
 func TestCircuitBreaker_ClosedState_AllowsRequests(t *testing.T) {
 	var calls int32
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		atomic.AddInt32(&calls, 1)
 		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 	})
@@ -46,7 +47,7 @@ func TestCircuitBreaker_ClosedState_AllowsRequests(t *testing.T) {
 
 func TestCircuitBreaker_OpensAfterFailureThreshold(t *testing.T) {
 	var calls int32
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		atomic.AddInt32(&calls, 1)
 		return nil, errors.New("connection refused")
 	})
@@ -86,7 +87,7 @@ func TestCircuitBreaker_OpensAfterFailureThreshold(t *testing.T) {
 func TestCircuitBreaker_TransitionsToHalfOpenAfterTimeout(t *testing.T) {
 	var calls int32
 	shouldSucceed := false
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		atomic.AddInt32(&calls, 1)
 		if shouldSucceed {
 			return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
@@ -116,7 +117,7 @@ func TestCircuitBreaker_TransitionsToHalfOpenAfterTimeout(t *testing.T) {
 	}
 
 	// Wait for reset timeout
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(110 * time.Millisecond)
 
 	// Now circuit should be half-open, next request goes through
 	shouldSucceed = true
@@ -133,7 +134,7 @@ func TestCircuitBreaker_TransitionsToHalfOpenAfterTimeout(t *testing.T) {
 
 func TestCircuitBreaker_HalfOpenSuccessCloses(t *testing.T) {
 	callCount := 0
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		callCount++
 		if callCount <= 2 {
 			return nil, errors.New("connection refused")
@@ -156,7 +157,7 @@ func TestCircuitBreaker_HalfOpenSuccessCloses(t *testing.T) {
 	}
 
 	// Wait for half-open
-	time.Sleep(15 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 
 	// Success in half-open should close circuit
 	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
@@ -176,7 +177,7 @@ func TestCircuitBreaker_HalfOpenSuccessCloses(t *testing.T) {
 }
 
 func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		return nil, errors.New("connection refused")
 	})
 
@@ -195,7 +196,7 @@ func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 	}
 
 	// Wait for half-open
-	time.Sleep(15 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 
 	// Failure in half-open should reopen circuit
 	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
@@ -211,8 +212,32 @@ func TestCircuitBreaker_HalfOpenFailureReopens(t *testing.T) {
 }
 
 func TestCircuitBreaker_SuccessResetsFailureCount(t *testing.T) {
+	// Control case: with threshold 3 and no intermediate success, the third
+	// consecutive failure must open the circuit. Without this, the assertion
+	// below would also pass if failures were never counted at all.
+	var failCalls int32
+	failRT := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&failCalls, 1)
+		return nil, errors.New("connection refused")
+	})
+	cFail := rhttp.New(
+		rhttp.WithTransport(failRT),
+		rhttp.WithMiddleware(rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
+			FailureThreshold: 3,
+			ResetTimeout:     1 * time.Hour,
+		})),
+	)
+	for i := 0; i < 3; i++ {
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+		_, _ = cFail.Do(context.Background(), req)
+	}
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	if _, err := cFail.Do(context.Background(), req); !errors.Is(err, rhttp.ErrCircuitOpen) {
+		t.Fatalf("control case: expected open circuit after 3 straight failures, got %v", err)
+	}
+
 	callCount := 0
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		callCount++
 		// Fail on calls 1, 2, then succeed, then fail on 4, 5
 		if callCount <= 2 || callCount >= 4 && callCount <= 5 {
@@ -236,7 +261,7 @@ func TestCircuitBreaker_SuccessResetsFailureCount(t *testing.T) {
 	}
 
 	// 1 success - should reset counter
-	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	req, _ = http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
 	_, _ = c.Do(context.Background(), req)
 
 	// 2 more failures - should not open circuit (counter was reset)
@@ -257,7 +282,7 @@ func TestCircuitBreaker_SuccessResetsFailureCount(t *testing.T) {
 
 func TestCircuitBreaker_5xxStatusCountsAsFailure(t *testing.T) {
 	var calls int32
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		atomic.AddInt32(&calls, 1)
 		return &http.Response{StatusCode: http.StatusInternalServerError, Request: req}, nil
 	})
@@ -290,7 +315,7 @@ func TestCircuitBreaker_5xxStatusCountsAsFailure(t *testing.T) {
 
 func TestCircuitBreaker_ThreadSafety(t *testing.T) {
 	var calls int64
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		atomic.AddInt64(&calls, 1)
 		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 	})
@@ -337,7 +362,7 @@ func newBlockingProbe() *blockingProbe {
 	}
 }
 
-func (b *blockingProbe) rt() internal.RoundTripperFunc {
+func (b *blockingProbe) rt() rhttp.RoundTripperFunc {
 	return func(req *http.Request) (*http.Response, error) {
 		if !b.halfOpen.Load() {
 			return nil, errors.New("connection refused")
@@ -349,7 +374,7 @@ func (b *blockingProbe) rt() internal.RoundTripperFunc {
 	}
 }
 
-func openCircuit(t *testing.T, c rhttp.Client, times int) {
+func openCircuit(t *testing.T, c *rhttp.Client, times int) {
 	t.Helper()
 	for i := 0; i < times; i++ {
 		req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
@@ -371,7 +396,7 @@ func TestCircuitBreaker_HalfOpenAdmitsSingleProbeByDefault(t *testing.T) {
 	)
 
 	openCircuit(t, c, 2)
-	time.Sleep(15 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 	bp.halfOpen.Store(true)
 
 	// One probe transitions to half-open and blocks inside the transport.
@@ -414,7 +439,7 @@ func TestCircuitBreaker_HalfOpenRespectsMaxHalfOpenRequests(t *testing.T) {
 	)
 
 	openCircuit(t, c, 2)
-	time.Sleep(15 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 	bp.halfOpen.Store(true)
 
 	// Admit maxProbes concurrent probes; hold them all in flight.
@@ -447,7 +472,7 @@ func TestCircuitBreaker_HalfOpenRespectsMaxHalfOpenRequests(t *testing.T) {
 
 func TestCircuitBreaker_OneSuccessDoesNotCloseWithThreshold(t *testing.T) {
 	var succeed atomic.Bool
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		if succeed.Load() {
 			return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 		}
@@ -464,7 +489,7 @@ func TestCircuitBreaker_OneSuccessDoesNotCloseWithThreshold(t *testing.T) {
 	)
 
 	openCircuit(t, c, 2)
-	time.Sleep(15 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 
 	// First half-open probe succeeds (1 of 2 required).
 	succeed.Store(true)
@@ -488,7 +513,7 @@ func TestCircuitBreaker_OneSuccessDoesNotCloseWithThreshold(t *testing.T) {
 func TestCircuitBreaker_ClosesAfterSuccessThreshold(t *testing.T) {
 	var succeed atomic.Bool
 	var calls int32
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		atomic.AddInt32(&calls, 1)
 		if succeed.Load() {
 			return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
@@ -506,7 +531,7 @@ func TestCircuitBreaker_ClosesAfterSuccessThreshold(t *testing.T) {
 	)
 
 	openCircuit(t, c, 2)
-	time.Sleep(15 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 	succeed.Store(true)
 
 	// Two sequential half-open successes close the circuit.
@@ -537,9 +562,105 @@ func TestCircuitBreaker_ClosesAfterSuccessThreshold(t *testing.T) {
 	}
 }
 
+func TestCircuitBreaker_MiddlewareApplicationsAreIndependent(t *testing.T) {
+	mw := rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
+		FailureThreshold: 1,
+		ResetTimeout:     time.Hour,
+	})
+
+	backendErr := errors.New("backend down")
+	failing := rhttp.RoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, backendErr
+	})
+	healthy := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+	})
+
+	chainA := mw(failing)
+	chainB := mw(healthy)
+
+	reqA, _ := http.NewRequest(http.MethodGet, "http://a.example", http.NoBody)
+	if _, err := chainA.RoundTrip(reqA); !errors.Is(err, backendErr) {
+		t.Fatalf("chain A reached the wrong transport (next overwritten by chain B): err=%v", err)
+	}
+
+	reqB, _ := http.NewRequest(http.MethodGet, "http://b.example", http.NoBody)
+	resp, err := chainB.RoundTrip(reqB)
+	if errors.Is(err, rhttp.ErrCircuitOpen) {
+		t.Fatal("chain B's circuit opened due to chain A's failures: shared state")
+	}
+	if resp == nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("chain B did not reach its own transport: resp=%v err=%v", resp, err)
+	}
+}
+
+func TestCircuitBreaker_SharedInstanceSharesState(t *testing.T) {
+	shared := rhttp.NewCircuitBreaker(rhttp.CircuitBreakerConfig{
+		FailureThreshold: 1,
+		ResetTimeout:     time.Hour,
+	})
+
+	backendErr := errors.New("backend down")
+	failing := rhttp.RoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, backendErr
+	})
+	healthy := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+	})
+
+	chainA := shared.Middleware()(failing)
+	chainB := shared.Middleware()(healthy)
+
+	reqA, _ := http.NewRequest(http.MethodGet, "http://a.example", http.NoBody)
+	if _, err := chainA.RoundTrip(reqA); !errors.Is(err, backendErr) {
+		t.Fatalf("chain A should reach its failing transport, got %v", err)
+	}
+
+	reqB, _ := http.NewRequest(http.MethodGet, "http://b.example", http.NoBody)
+	if _, err := chainB.RoundTrip(reqB); !errors.Is(err, rhttp.ErrCircuitOpen) {
+		t.Fatalf("shared breaker: chain B should see the circuit opened by chain A, got %v", err)
+	}
+}
+
+func TestCircuitBreaker_ClientCancellationsDoNotOpenCircuit(t *testing.T) {
+	rt := rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
+		FailureThreshold: 3,
+		ResetTimeout:     time.Hour,
+	})(rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, &url.Error{Op: "Get", URL: req.URL.String(), Err: context.Canceled}
+	}))
+
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	for i := 0; i < 5; i++ {
+		_, _ = rt.RoundTrip(req)
+	}
+
+	if _, err := rt.RoundTrip(req); errors.Is(err, rhttp.ErrCircuitOpen) {
+		t.Fatal("client cancellations opened the circuit against a healthy upstream")
+	}
+}
+
+func TestCircuitBreaker_TimeoutsOpenCircuit(t *testing.T) {
+	rt := rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
+		FailureThreshold: 3,
+		ResetTimeout:     time.Hour,
+	})(rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, &url.Error{Op: "Get", URL: req.URL.String(), Err: context.DeadlineExceeded}
+	}))
+
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	for i := 0; i < 3; i++ {
+		_, _ = rt.RoundTrip(req)
+	}
+
+	if _, err := rt.RoundTrip(req); !errors.Is(err, rhttp.ErrCircuitOpen) {
+		t.Fatal("timeouts should count as failures and open the circuit")
+	}
+}
+
 func TestCircuitBreaker_CustomIsFailure(t *testing.T) {
 	var calls int32
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		atomic.AddInt32(&calls, 1)
 		// Return 429 which is not a 5xx
 		return &http.Response{StatusCode: http.StatusTooManyRequests, Request: req}, nil
@@ -577,5 +698,205 @@ func TestCircuitBreaker_CustomIsFailure(t *testing.T) {
 
 	if !errors.Is(err, rhttp.ErrCircuitOpen) {
 		t.Fatalf("expected circuit to open with custom IsFailure, got %v", err)
+	}
+}
+
+func TestCircuitBreaker_IsFailureMayCallState(t *testing.T) {
+	var scb *rhttp.SharedCircuitBreaker
+	scb = rhttp.NewCircuitBreaker(rhttp.CircuitBreakerConfig{
+		FailureThreshold: 2,
+		IsFailure: func(_ *http.Response, err error) bool {
+			// A user callback that inspects the breaker must not deadlock.
+			_ = scb.State()
+			return err != nil
+		},
+	})
+
+	rt := rhttp.RoundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+		return nil, errors.New("boom")
+	})
+	c := rhttp.New(
+		rhttp.WithTransport(rt),
+		rhttp.WithMiddleware(scb.Middleware()),
+	)
+
+	done := make(chan struct{})
+	go func() {
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+		_, _ = c.Do(context.Background(), req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("IsFailure calling State() deadlocked recordResult")
+	}
+}
+
+// Regression (C2): a slow request admitted while Closed must not have its late
+// result counted against a later Half-Open episode. Without generation gating,
+// its success runs recordHalfOpenResult, closing the circuit and freeing the
+// real probe's budget.
+func TestCircuitBreaker_StaleResultDoesNotCloseHalfOpen(t *testing.T) {
+	enteredA := make(chan struct{})
+	relA := make(chan struct{})
+	enteredC := make(chan struct{})
+	relC := make(chan struct{})
+
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.Header.Get("X-Role") {
+		case "fail":
+			return nil, errors.New("connection refused")
+		case "slow-closed":
+			close(enteredA)
+			<-relA
+			return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
+		case "probe":
+			close(enteredC)
+			<-relC
+			return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
+		default:
+			return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
+		}
+	})
+
+	scb := rhttp.NewCircuitBreaker(rhttp.CircuitBreakerConfig{
+		FailureThreshold: 1,
+		ResetTimeout:     10 * time.Millisecond,
+	})
+	c := rhttp.New(
+		rhttp.WithTransport(rt),
+		rhttp.WithMiddleware(scb.Middleware()),
+	)
+
+	do := func(role string) {
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+		req.Header.Set("X-Role", role)
+		_, _ = c.Do(context.Background(), req)
+	}
+
+	var wg sync.WaitGroup
+
+	// 1. Admit a slow request while Closed; hold it in flight.
+	doneA := make(chan struct{})
+	wg.Add(1)
+	go func() { defer wg.Done(); do("slow-closed"); close(doneA) }()
+	<-enteredA
+
+	// 2. A failure opens the circuit (threshold 1).
+	do("fail")
+	if got := scb.State(); got != rhttp.CircuitOpen {
+		t.Fatalf("expected Open after failure, got %v", got)
+	}
+
+	// 3. After the reset timeout, admit a probe; hold it in flight (Half-Open).
+	time.Sleep(60 * time.Millisecond)
+	wg.Add(1)
+	go func() { defer wg.Done(); do("probe") }()
+	<-enteredC
+	if got := scb.State(); got != rhttp.CircuitHalfOpen {
+		t.Fatalf("expected Half-Open with a probe in flight, got %v", got)
+	}
+
+	// 4. The stale Closed-era request completes successfully and is recorded.
+	close(relA)
+	<-doneA
+
+	// 5. The circuit must stay Half-Open and the probe budget must remain taken.
+	if got := scb.State(); got != rhttp.CircuitHalfOpen {
+		t.Fatalf("stale Closed result closed the circuit: state=%v", got)
+	}
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	req.Header.Set("X-Role", "check")
+	if _, err := c.Do(context.Background(), req); !errors.Is(err, rhttp.ErrCircuitOpen) {
+		t.Fatalf("stale result freed the half-open budget: got %v", err)
+	}
+
+	close(relC)
+	wg.Wait()
+}
+
+func TestCircuitState_String(t *testing.T) {
+	cases := map[rhttp.CircuitState]string{
+		rhttp.CircuitClosed:    "closed",
+		rhttp.CircuitOpen:      "open",
+		rhttp.CircuitHalfOpen:  "half-open",
+		rhttp.CircuitState(99): "unknown",
+	}
+	for state, want := range cases {
+		if got := state.String(); got != want {
+			t.Errorf("state %d: expected %q, got %q", int(state), want, got)
+		}
+	}
+}
+
+func TestCircuitBreaker_OpenClosesRequestBody(t *testing.T) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("connection refused")
+	})
+	c := rhttp.New(
+		rhttp.WithTransport(rt),
+		rhttp.WithMiddleware(rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
+			FailureThreshold: 1,
+			ResetTimeout:     time.Hour,
+		})),
+	)
+
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	_, _ = c.Do(context.Background(), req)
+
+	rec := &closeRecorder{Reader: strings.NewReader("payload")}
+	req, _ = http.NewRequest(http.MethodPut, "http://example.com", http.NoBody)
+	req.Body = rec
+	_, err := c.Do(context.Background(), req)
+
+	if !errors.Is(err, rhttp.ErrCircuitOpen) {
+		t.Fatalf("expected ErrCircuitOpen, got %v", err)
+	}
+	if !rec.closed {
+		t.Error("request body was not closed on circuit-open short-circuit")
+	}
+}
+
+func TestSharedCircuitBreaker_StateObservesTransitions(t *testing.T) {
+	bp := newBlockingProbe()
+	shared := rhttp.NewCircuitBreaker(rhttp.CircuitBreakerConfig{
+		FailureThreshold: 2,
+		ResetTimeout:     10 * time.Millisecond,
+	})
+	c := rhttp.New(
+		rhttp.WithTransport(bp.rt()),
+		rhttp.WithMiddleware(shared.Middleware()),
+	)
+
+	if got := shared.State(); got != rhttp.CircuitClosed {
+		t.Fatalf("expected initial state closed, got %v", got)
+	}
+
+	openCircuit(t, c, 2)
+	if got := shared.State(); got != rhttp.CircuitOpen {
+		t.Fatalf("expected open after %d failures, got %v", 2, got)
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	bp.halfOpen.Store(true)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+		_, _ = c.Do(context.Background(), req)
+	}()
+
+	<-bp.entered
+	if got := shared.State(); got != rhttp.CircuitHalfOpen {
+		t.Fatalf("expected half-open while the probe is in flight, got %v", got)
+	}
+
+	close(bp.release)
+	<-done
+	if got := shared.State(); got != rhttp.CircuitClosed {
+		t.Fatalf("expected closed after a successful probe, got %v", got)
 	}
 }

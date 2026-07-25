@@ -10,10 +10,6 @@ import (
 
 // RateLimiter controls the rate of HTTP requests.
 type RateLimiter interface {
-	// Wait blocks until a token is available.
-	// Deprecated: Use WaitContext for proper cancellation support.
-	Wait() error
-
 	// WaitContext blocks until a token is available or context is canceled.
 	// Returns an error if the context is canceled.
 	WaitContext(ctx context.Context) error
@@ -30,24 +26,29 @@ type TokenBucket struct {
 	maxTokens  float64
 	refillRate float64 // tokens per second
 	lastRefill time.Time
+	waitTime   time.Duration // time for one token to refill; immutable
+	unlimited  bool
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
 // rate: requests per second allowed
 // burst: maximum burst size (bucket capacity)
+//
+// A non-positive rate or a burst below 1 is invalid configuration: the returned
+// bucket does not limit (it allows every request), following the project
+// convention that invalid config becomes a no-op rather than a busy-loop or a
+// permanent block.
 func NewTokenBucket(rate float64, burst int) *TokenBucket {
+	if rate <= 0 || burst < 1 {
+		return &TokenBucket{unlimited: true}
+	}
 	return &TokenBucket{
 		tokens:     float64(burst),
 		maxTokens:  float64(burst),
 		refillRate: rate,
 		lastRefill: time.Now(),
+		waitTime:   time.Duration(float64(time.Second) / rate),
 	}
-}
-
-// Wait blocks until a token is available.
-// Deprecated: Use WaitContext for proper cancellation support.
-func (tb *TokenBucket) Wait() error {
-	return tb.WaitContext(context.Background())
 }
 
 // WaitContext blocks until a token is available or context is canceled.
@@ -57,21 +58,22 @@ func (tb *TokenBucket) WaitContext(ctx context.Context) error {
 			return nil
 		}
 
-		// Calculate wait time for next token
-		tb.mu.Lock()
-		waitTime := time.Duration((1.0 / tb.refillRate) * float64(time.Second))
-		tb.mu.Unlock()
-
+		timer := time.NewTimer(tb.waitTime)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return ctx.Err()
-		case <-time.After(waitTime):
+		case <-timer.C:
 		}
 	}
 }
 
 // TryAcquire attempts to acquire a token without blocking.
 func (tb *TokenBucket) TryAcquire() bool {
+	if tb.unlimited {
+		return true
+	}
+
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 
@@ -147,10 +149,13 @@ func (r *rateLimitRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 			waitTime := time.Until(r.retryAt)
 			r.retryLock.Unlock()
 
+			timer := time.NewTimer(waitTime)
 			select {
 			case <-req.Context().Done():
+				timer.Stop()
+				closeRequestBody(req)
 				return nil, req.Context().Err()
-			case <-time.After(waitTime):
+			case <-timer.C:
 			}
 		} else {
 			r.retryLock.Unlock()
@@ -160,9 +165,11 @@ func (r *rateLimitRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	// Acquire rate limit token
 	if r.cfg.WaitOnLimit {
 		if err := r.cfg.Limiter.WaitContext(req.Context()); err != nil {
+			closeRequestBody(req)
 			return nil, err
 		}
 	} else if !r.cfg.Limiter.TryAcquire() {
+		closeRequestBody(req)
 		return nil, ErrRateLimited
 	}
 
@@ -184,48 +191,4 @@ func (r *rateLimitRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	}
 
 	return resp, err
-}
-
-// PerHostRateLimiter provides separate rate limiters for each host.
-// It lazily creates a TokenBucket for each unique host on first access.
-// This is useful when making requests to multiple APIs with different rate limits.
-type PerHostRateLimiter struct {
-	mu       sync.RWMutex
-	limiters map[string]*TokenBucket
-	rate     float64
-	burst    int
-}
-
-// NewPerHostRateLimiter creates a rate limiter that applies limits per host.
-func NewPerHostRateLimiter(rate float64, burst int) *PerHostRateLimiter {
-	return &PerHostRateLimiter{
-		limiters: make(map[string]*TokenBucket),
-		rate:     rate,
-		burst:    burst,
-	}
-}
-
-// GetLimiter returns the rate limiter for a specific host.
-// If no limiter exists for the host, a new one is created with the configured
-// rate and burst values. This method is safe for concurrent use.
-func (p *PerHostRateLimiter) GetLimiter(host string) *TokenBucket {
-	p.mu.RLock()
-	limiter, ok := p.limiters[host]
-	p.mu.RUnlock()
-
-	if ok {
-		return limiter
-	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if limiter, ok = p.limiters[host]; ok {
-		return limiter
-	}
-
-	limiter = NewTokenBucket(p.rate, p.burst)
-	p.limiters[host] = limiter
-	return limiter
 }

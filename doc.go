@@ -27,7 +27,7 @@
 // Middleware wraps http.RoundTripper to add cross-cutting concerns. The recommended
 // order from outermost to innermost is:
 //
-//	Logging -> Metrics -> Timeout -> RateLimit -> CircuitBreaker -> Retry
+//	Logging -> Metrics -> Timeout -> RateLimit -> Retry -> CircuitBreaker
 //
 // Available middleware:
 //   - [Timeout]: Enforces request timeouts
@@ -41,7 +41,7 @@
 //
 // For a more ergonomic API, use the RequestBuilder:
 //
-//	resp, err := rhttp.R(client).
+//	resp, err := client.R().
 //		SetHeader("Authorization", "Bearer token").
 //		SetQueryParam("page", "1").
 //		SetBodyJSON(payload).
@@ -57,6 +57,9 @@
 //   - [DecorrelatedJitterBackoff]: AWS-recommended jitter algorithm
 //   - [ExponentialBackoffFullJitter]: Full jitter for thundering herd prevention
 //   - [ExponentialBackoffEqualJitter]: Equal jitter variant
+//
+// Strategies compose with [WithJitter], [WithMin], [WithMax], and
+// [WithRetryAfter], which honors the Retry-After header on 429/503 responses.
 //
 // # Error Classification
 //
@@ -74,7 +77,8 @@
 //
 // All types in this package are safe for concurrent use unless otherwise noted.
 // The [Client] can be shared across goroutines, and middleware implementations
-// are designed to be thread-safe.
+// are designed to be thread-safe. The exception is [RequestBuilder]: each
+// builder is meant for a single request from a single goroutine.
 //
 // # Zero Dependencies
 //

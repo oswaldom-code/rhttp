@@ -10,11 +10,10 @@ import (
 	"time"
 
 	"github.com/oswaldom-code/rhttp"
-	"github.com/oswaldom-code/rhttp/internal"
 )
 
 func TestTimeout_RequestCompletesBeforeTimeout(t *testing.T) {
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 	})
 
@@ -35,7 +34,7 @@ func TestTimeout_RequestCompletesBeforeTimeout(t *testing.T) {
 }
 
 func TestTimeout_RequestExceedsTimeout(t *testing.T) {
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		select {
 		case <-req.Context().Done():
 			return nil, req.Context().Err()
@@ -57,9 +56,38 @@ func TestTimeout_RequestExceedsTimeout(t *testing.T) {
 	}
 }
 
+func TestTimeout_NonPositiveDurationIsNoOp(t *testing.T) {
+	for _, d := range []time.Duration{0, -time.Second} {
+		t.Run(d.String(), func(t *testing.T) {
+			var hadDeadline bool
+			rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				_, hadDeadline = req.Context().Deadline()
+				return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
+			})
+
+			c := rhttp.New(
+				rhttp.WithTransport(rt),
+				rhttp.WithMiddleware(rhttp.Timeout(d)),
+			)
+
+			req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+			resp, err := c.Do(context.Background(), req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("unexpected status: %d", resp.StatusCode)
+			}
+			if hadDeadline {
+				t.Fatal("expected no deadline for non-positive timeout")
+			}
+		})
+	}
+}
+
 func TestTimeout_RespectsExistingShorterDeadline(t *testing.T) {
 	var capturedDeadline time.Time
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		capturedDeadline, _ = req.Context().Deadline()
 		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 	})
@@ -121,7 +149,7 @@ func TestTimeout_StreamingBodyReadableAfterReturn(t *testing.T) {
 
 func TestTimeout_AppliesWhenExistingDeadlineLonger(t *testing.T) {
 	var capturedCtx context.Context
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		capturedCtx = req.Context()
 		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 	})

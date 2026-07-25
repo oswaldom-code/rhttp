@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/oswaldom-code/rhttp"
-	"github.com/oswaldom-code/rhttp/internal"
 )
 
 func TestLogging_LogsSuccessfulRequest(t *testing.T) {
@@ -18,7 +17,7 @@ func TestLogging_LogsSuccessfulRequest(t *testing.T) {
 		captured = entry
 	})
 
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 	})
 
@@ -56,7 +55,7 @@ func TestLogging_LogsFailedRequest(t *testing.T) {
 	})
 
 	expectedErr := errors.New("connection refused")
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		return nil, expectedErr
 	})
 
@@ -87,7 +86,7 @@ func TestLogging_MeasuresDuration(t *testing.T) {
 		captured = entry
 	})
 
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		time.Sleep(50 * time.Millisecond)
 		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 	})
@@ -114,7 +113,7 @@ func TestLogging_ShouldLogFilters(t *testing.T) {
 	})
 
 	callCount := 0
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		callCount++
 		if callCount%2 == 0 {
 			return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
@@ -146,7 +145,7 @@ func TestLogging_ShouldLogFilters(t *testing.T) {
 }
 
 func TestLogging_NilLoggerIsNoOp(t *testing.T) {
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 	})
 
@@ -178,7 +177,7 @@ func TestLogging_ThreadSafety(t *testing.T) {
 		mu.Unlock()
 	})
 
-	rt := internal.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
 	})
 

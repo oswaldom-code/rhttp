@@ -2,9 +2,11 @@ package rhttp_test
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"net"
 	"net/url"
+	"syscall"
 	"testing"
 
 	"github.com/oswaldom-code/rhttp"
@@ -42,7 +44,7 @@ func TestClassify_DNSError(t *testing.T) {
 }
 
 func TestClassify_ConnectionRefused(t *testing.T) {
-	err := errors.New("dial tcp 127.0.0.1:8080: connection refused")
+	err := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
 	classified := rhttp.Classify(err)
 
 	if classified.Kind != rhttp.ErrKindConnection {
@@ -51,7 +53,7 @@ func TestClassify_ConnectionRefused(t *testing.T) {
 }
 
 func TestClassify_ConnectionReset(t *testing.T) {
-	err := errors.New("read tcp: connection reset by peer")
+	err := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
 	classified := rhttp.Classify(err)
 
 	if classified.Kind != rhttp.ErrKindConnection {
@@ -60,7 +62,7 @@ func TestClassify_ConnectionReset(t *testing.T) {
 }
 
 func TestClassify_TLSError(t *testing.T) {
-	err := errors.New("tls: certificate signed by unknown authority")
+	err := x509.UnknownAuthorityError{}
 	classified := rhttp.Classify(err)
 
 	if classified.Kind != rhttp.ErrKindTLS {
@@ -69,7 +71,7 @@ func TestClassify_TLSError(t *testing.T) {
 }
 
 func TestClassify_X509Error(t *testing.T) {
-	err := errors.New("x509: certificate has expired")
+	err := x509.CertificateInvalidError{Reason: x509.Expired}
 	classified := rhttp.Classify(err)
 
 	if classified.Kind != rhttp.ErrKindTLS {
@@ -128,10 +130,9 @@ func TestClassify_UnknownError(t *testing.T) {
 }
 
 func TestClassifiedError_Error(t *testing.T) {
-	err := errors.New("connection refused")
-	classified := rhttp.Classify(err)
+	classified := rhttp.Classify(syscall.ECONNREFUSED)
 
-	expected := "connection: connection refused"
+	expected := "connection: " + syscall.ECONNREFUSED.Error()
 	if classified.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, classified.Error())
 	}
@@ -156,7 +157,6 @@ func TestErrorKind_String(t *testing.T) {
 		{rhttp.ErrKindConnection, "connection"},
 		{rhttp.ErrKindDNS, "dns"},
 		{rhttp.ErrKindTLS, "tls"},
-		{rhttp.ErrKindTemporary, "temporary"},
 		{rhttp.ErrKindUnknown, "unknown"},
 	}
 
@@ -172,7 +172,6 @@ func TestErrorKind_IsRetryable(t *testing.T) {
 		rhttp.ErrKindTimeout,
 		rhttp.ErrKindConnection,
 		rhttp.ErrKindDNS,
-		rhttp.ErrKindTemporary,
 	}
 	for _, k := range retryable {
 		if !k.IsRetryable() {
@@ -217,9 +216,8 @@ func TestIsCanceled(t *testing.T) {
 }
 
 func TestIsConnection(t *testing.T) {
-	err := errors.New("connection refused")
-	if !rhttp.IsConnection(err) {
-		t.Error("expected IsConnection to be true for connection refused")
+	if !rhttp.IsConnection(syscall.ECONNREFUSED) {
+		t.Error("expected IsConnection to be true for ECONNREFUSED")
 	}
 	if rhttp.IsConnection(context.Canceled) {
 		t.Error("expected IsConnection to be false for Canceled")
@@ -237,12 +235,37 @@ func TestIsDNS(t *testing.T) {
 }
 
 func TestIsTLS(t *testing.T) {
-	err := errors.New("tls: handshake failure")
-	if !rhttp.IsTLS(err) {
+	if !rhttp.IsTLS(x509.UnknownAuthorityError{}) {
 		t.Error("expected IsTLS to be true for TLS error")
 	}
 	if rhttp.IsTLS(context.Canceled) {
 		t.Error("expected IsTLS to be false for Canceled")
+	}
+}
+
+func TestClassify_AllKindsAreReachable(t *testing.T) {
+	producers := map[rhttp.ErrorKind]error{
+		rhttp.ErrKindUnknown:    errors.New("something completely unexpected"),
+		rhttp.ErrKindTimeout:    context.DeadlineExceeded,
+		rhttp.ErrKindCanceled:   context.Canceled,
+		rhttp.ErrKindConnection: syscall.ECONNREFUSED,
+		rhttp.ErrKindDNS:        &net.DNSError{Err: "no such host"},
+		rhttp.ErrKindTLS:        x509.UnknownAuthorityError{},
+	}
+
+	for kind, err := range producers {
+		if got := rhttp.Classify(err).Kind; got != kind {
+			t.Errorf("expected %v to classify as %v, got %v", err, kind, got)
+		}
+	}
+
+	for k := rhttp.ErrKindUnknown; ; k++ {
+		if k != rhttp.ErrKindUnknown && k.String() == "unknown" {
+			break
+		}
+		if _, ok := producers[k]; !ok {
+			t.Errorf("ErrorKind %d (%s) has no producing error: orphaned kind", k, k)
+		}
 	}
 }
 
@@ -251,7 +274,7 @@ func TestIsRetryable(t *testing.T) {
 	if !rhttp.IsRetryable(context.DeadlineExceeded) {
 		t.Error("expected timeout to be retryable")
 	}
-	if !rhttp.IsRetryable(errors.New("connection refused")) {
+	if !rhttp.IsRetryable(syscall.ECONNREFUSED) {
 		t.Error("expected connection error to be retryable")
 	}
 
@@ -259,7 +282,7 @@ func TestIsRetryable(t *testing.T) {
 	if rhttp.IsRetryable(context.Canceled) {
 		t.Error("expected canceled to not be retryable")
 	}
-	if rhttp.IsRetryable(errors.New("tls: certificate error")) {
+	if rhttp.IsRetryable(x509.UnknownAuthorityError{}) {
 		t.Error("expected TLS error to not be retryable")
 	}
 	if rhttp.IsRetryable(nil) {

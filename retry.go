@@ -12,8 +12,9 @@ type RetryConfig struct {
 	MaxAttempts int
 
 	// Backoff returns the duration to wait before the nth retry (0-indexed).
-	// If nil, exponential backoff is used.
-	Backoff func(attempt int) time.Duration
+	// It receives the response of the attempt that triggered the retry (nil if
+	// it produced no response). If nil, exponential backoff is used.
+	Backoff BackoffFunc
 
 	// IsRetryable determines if a request should be retried based on the response and error.
 	// If nil, default retry logic is used.
@@ -59,12 +60,19 @@ func (r retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 
 	for attempt := 0; attempt < r.cfg.MaxAttempts; attempt++ {
 		if attempt > 0 {
-			if err := r.prepareRetry(req, attempt); err != nil {
+			if err := r.waitBackoff(req, attempt, resp); err != nil {
+				closeRequestBody(req)
 				return nil, err
 			}
 		}
 
-		resp, err = r.next.RoundTrip(req)
+		attemptReq, prepErr := r.prepareRequest(req, attempt)
+		if prepErr != nil {
+			closeRequestBody(req)
+			return nil, prepErr
+		}
+
+		resp, err = r.next.RoundTrip(attemptReq)
 
 		if !r.cfg.IsRetryable(resp, err) {
 			return resp, err
@@ -86,28 +94,45 @@ func (r retryRoundTripper) canRetry(req *http.Request) bool {
 	return req.Body == nil || req.Body == http.NoBody || req.GetBody != nil
 }
 
-func (r retryRoundTripper) prepareRetry(req *http.Request, attempt int) error {
+func (r retryRoundTripper) prepareRequest(req *http.Request, attempt int) (*http.Request, error) {
+	// The first attempt uses the request as-is: Do already cloned it, so the
+	// caller's request is never mutated.
+	if attempt == 0 {
+		return req, nil
+	}
+
+	attemptReq := req.Clone(req.Context())
+
 	if req.GetBody != nil {
 		body, err := req.GetBody()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		req.Body = body
+		attemptReq.Body = body
 	}
+
+	return attemptReq, nil
+}
+
+func (r retryRoundTripper) waitBackoff(req *http.Request, attempt int, prev *http.Response) error {
+	timer := time.NewTimer(r.cfg.Backoff(attempt-1, prev))
+	defer timer.Stop()
 
 	select {
 	case <-req.Context().Done():
 		return req.Context().Err()
-	case <-time.After(r.cfg.Backoff(attempt - 1)):
+	case <-timer.C:
 		return nil
 	}
 }
+
+const maxDrainBytes = 256 << 10
 
 func drainAndClose(resp *http.Response) {
 	if resp == nil || resp.Body == nil {
 		return
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
 	_ = resp.Body.Close()
 }
 
@@ -124,7 +149,7 @@ func isIdempotent(method string) bool {
 // DefaultIsRetryable returns true for transient errors and retryable status codes.
 func DefaultIsRetryable(resp *http.Response, err error) bool {
 	if err != nil {
-		return true
+		return Classify(err).Kind.IsRetryable()
 	}
 	if resp == nil {
 		return false
