@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="rhttp - resilient HTTP client for Go, zero dependencies">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#122036"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00ADD8"/>
+      <stop offset="1" stop-color="#54d9f8"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#00ADD8" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#00ADD8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <g fill="#1d2c44">
+    <circle cx="120" cy="80" r="3"/><circle cx="320" cy="560" r="3"/>
+    <circle cx="700" cy="70" r="3"/><circle cx="1120" cy="520" r="3"/>
+    <circle cx="1040" cy="90" r="3"/><circle cx="80" cy="470" r="3"/>
+  </g>
+
+  <g font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+    <text x="92" y="210" font-size="22" font-weight="700" letter-spacing="3" fill="#00ADD8">GO &#183; ZERO DEPENDENCIES</text>
+    <text x="86" y="352" font-size="148" font-weight="800" fill="#e6edf3" font-family="ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace">rhttp</text>
+    <text x="92" y="412" font-size="30" fill="#9fb0c3">Resilient HTTP client for Go</text>
+  </g>
+
+  <g font-family="ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace" font-size="19" fill="#cfe6f2">
+    <rect x="92"  y="452" width="130" height="44" rx="22" fill="#0e1830" stroke="#24354d" stroke-width="2"/>
+    <text x="157" y="480" text-anchor="middle">Timeout</text>
+    <rect x="236" y="452" width="106" height="44" rx="22" fill="#0e1830" stroke="#24354d" stroke-width="2"/>
+    <text x="289" y="480" text-anchor="middle">Retry</text>
+    <rect x="356" y="452" width="212" height="44" rx="22" fill="#0e1830" stroke="#24354d" stroke-width="2"/>
+    <text x="462" y="480" text-anchor="middle">Circuit Breaker</text>
+    <rect x="582" y="452" width="164" height="44" rx="22" fill="#0e1830" stroke="#24354d" stroke-width="2"/>
+    <text x="664" y="480" text-anchor="middle">Rate Limit</text>
+  </g>
+
+  <!-- mark: retry ring with a pulse line.
+       The ring stroke starts at 3 o'clock and runs clockwise; with
+       an 85% dasharray over the real circumference the gap spans the top-right,
+       and the arrowhead sits on the leading edge at 85% (306deg). -->
+  <g transform="translate(958,315)">
+    <circle r="230" fill="url(#glow)"/>
+    <circle r="132" fill="none" stroke="url(#cyan)" stroke-width="20"
+            stroke-linecap="round" stroke-dasharray="705 124.4"/>
+    <g transform="rotate(306)">
+      <polygon points="114,-6 150,-6 132,28" fill="#54d9f8"/>
+    </g>
+    <path d="M -96 0 L -42 0 L -22 -52 L 12 56 L 32 0 L 96 0"
+          fill="none" stroke="#e6edf3" stroke-width="15"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

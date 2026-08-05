@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/banner.svg" alt="rhttp - resilient HTTP client for Go, zero dependencies" width="830">
+</p>
+
 # rhttp
 
 Production-grade HTTP client for Go with built-in resiliency patterns.
@@ -117,6 +121,13 @@ resp, err := client.R().
     SetPathParam("org", "acme").
     SetPathParam("repo", "api").
     Get("https://api.github.com/repos/{org}/{repo}")
+
+// Decode a JSON response (closes the body, fails on status >= 300)
+var user User
+resp, err := client.R().Get("https://api.example.com/users/1")
+if err == nil {
+    err = rhttp.DecodeJSON(resp, &user)
+}
 ```
 
 ## Middleware
@@ -259,8 +270,8 @@ if err != nil {
     switch classified.Kind {
     case rhttp.ErrKindTimeout:
         // Request timed out
-    case rhttp.ErrKindCancelled:
-        // Context was cancelled
+    case rhttp.ErrKindCanceled:
+        // Context was canceled
     case rhttp.ErrKindConnection:
         // Connection refused, reset, etc.
     case rhttp.ErrKindDNS:
@@ -456,7 +467,7 @@ All PRs must pass CI checks before merging.
 
 ## Roadmap
 
-> **Status:** Phase 1 complete. Phase 2 is the current focus.
+> **Status:** v0.1.0 released (Phase 1 complete). Phase 2 is the next focus.
 
 ### Phase 1: Foundation (Completed)
 
@@ -466,12 +477,14 @@ All PRs must pass CI checks before merging.
 - [x] **Timeout middleware** - Context-aware, respects shorter deadlines
 - [x] **Retry middleware** - Idempotency-safe with body replay
 - [x] **Backoff strategies** - Constant, linear, exponential, Fibonacci, jitter variants
-- [x] **Circuit breaker** - Closed/Open/Half-Open state machine
-- [x] **Rate limiting** - Token bucket + per-host limiter
+- [x] **Retry-After support** - `WithRetryAfter` honors the header on 429/503
+- [x] **Circuit breaker** - Closed/Open/Half-Open state machine, single-probe half-open
+- [x] **Shared circuit breaker** - One circuit state across multiple clients
+- [x] **Rate limiting** - Token bucket behind the pluggable RateLimiter interface
 - [x] **Logging middleware** - Pluggable `Logger` interface
 - [x] **Metrics middleware** - Pluggable `MetricsRecorder` interface
 - [x] **Error classification** - Timeout, connection, DNS, TLS, temporary
-- [x] **Fluent API** - Resty-style `RequestBuilder`
+- [x] **Fluent API** - Resty-style `RequestBuilder` plus the `DecodeJSON` helper
 - [x] **Zero dependencies** - Only Go standard library
 
 ### Phase 2: Advanced Resiliency
