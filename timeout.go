@@ -38,7 +38,7 @@ func (t timeoutRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 
 	ctx, cancel := context.WithTimeout(ctx, t.timeout)
 
-	req = req.Clone(ctx)
+	req = req.WithContext(ctx)
 	resp, err := t.next.RoundTrip(req)
 	if err != nil {
 		cancel()

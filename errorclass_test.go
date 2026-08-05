@@ -43,6 +43,60 @@ func TestClassify_DNSError(t *testing.T) {
 	}
 }
 
+func TestClassify_DNSNotFound(t *testing.T) {
+	dnsErr := &net.DNSError{
+		Err:        "no such host",
+		Name:       "this-host-does-not-exist.invalid",
+		IsNotFound: true,
+	}
+
+	classified := rhttp.Classify(dnsErr)
+	if classified.Kind != rhttp.ErrKindDNSNotFound {
+		t.Errorf("expected ErrKindDNSNotFound, got %v", classified.Kind)
+	}
+	if classified.Kind.IsRetryable() {
+		t.Error("NXDOMAIN is permanent: expected IsRetryable to be false")
+	}
+	if rhttp.IsRetryable(dnsErr) {
+		t.Error("expected package-level IsRetryable to be false for NXDOMAIN")
+	}
+	if rhttp.DefaultIsRetryable(nil, dnsErr) {
+		t.Error("expected DefaultIsRetryable to be false for NXDOMAIN")
+	}
+}
+
+func TestClassify_DNSNotFound_WrappedInURLError(t *testing.T) {
+	err := &url.Error{
+		Op:  "Get",
+		URL: "http://this-host-does-not-exist.invalid/",
+		Err: &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: &net.DNSError{Err: "no such host", IsNotFound: true},
+		},
+	}
+
+	if got := rhttp.Classify(err).Kind; got != rhttp.ErrKindDNSNotFound {
+		t.Errorf("expected ErrKindDNSNotFound through the real error chain, got %v", got)
+	}
+}
+
+func TestClassify_DNSTemporaryStaysRetryable(t *testing.T) {
+	dnsErr := &net.DNSError{
+		Err:         "server misbehaving",
+		Name:        "example.com",
+		IsTemporary: true,
+	}
+
+	classified := rhttp.Classify(dnsErr)
+	if classified.Kind != rhttp.ErrKindDNS {
+		t.Errorf("expected ErrKindDNS, got %v", classified.Kind)
+	}
+	if !classified.Kind.IsRetryable() {
+		t.Error("expected a temporary DNS failure to stay retryable")
+	}
+}
+
 func TestClassify_ConnectionRefused(t *testing.T) {
 	err := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
 	classified := rhttp.Classify(err)
@@ -156,6 +210,7 @@ func TestErrorKind_String(t *testing.T) {
 		{rhttp.ErrKindCanceled, "canceled"},
 		{rhttp.ErrKindConnection, "connection"},
 		{rhttp.ErrKindDNS, "dns"},
+		{rhttp.ErrKindDNSNotFound, "dns_not_found"},
 		{rhttp.ErrKindTLS, "tls"},
 		{rhttp.ErrKindUnknown, "unknown"},
 	}
@@ -182,6 +237,7 @@ func TestErrorKind_IsRetryable(t *testing.T) {
 	notRetryable := []rhttp.ErrorKind{
 		rhttp.ErrKindCanceled,
 		rhttp.ErrKindTLS,
+		rhttp.ErrKindDNSNotFound,
 		rhttp.ErrKindUnknown,
 	}
 	for _, k := range notRetryable {
@@ -229,8 +285,30 @@ func TestIsDNS(t *testing.T) {
 	if !rhttp.IsDNS(dnsErr) {
 		t.Error("expected IsDNS to be true for DNSError")
 	}
+
+	notFound := &net.DNSError{Err: "no such host", Name: "invalid.example.com", IsNotFound: true}
+	if !rhttp.IsDNS(notFound) {
+		t.Error("expected IsDNS to stay true for NXDOMAIN: it is still a DNS failure")
+	}
+
 	if rhttp.IsDNS(context.Canceled) {
 		t.Error("expected IsDNS to be false for Canceled")
+	}
+}
+
+func TestIsDNSNotFound(t *testing.T) {
+	notFound := &net.DNSError{Err: "no such host", Name: "invalid.example.com", IsNotFound: true}
+	if !rhttp.IsDNSNotFound(notFound) {
+		t.Error("expected IsDNSNotFound to be true for NXDOMAIN")
+	}
+
+	transient := &net.DNSError{Err: "server misbehaving", IsTemporary: true}
+	if rhttp.IsDNSNotFound(transient) {
+		t.Error("expected IsDNSNotFound to be false for a transient DNS failure")
+	}
+
+	if rhttp.IsDNSNotFound(nil) {
+		t.Error("expected IsDNSNotFound to be false for nil")
 	}
 }
 
@@ -249,8 +327,10 @@ func TestClassify_AllKindsAreReachable(t *testing.T) {
 		rhttp.ErrKindTimeout:    context.DeadlineExceeded,
 		rhttp.ErrKindCanceled:   context.Canceled,
 		rhttp.ErrKindConnection: syscall.ECONNREFUSED,
-		rhttp.ErrKindDNS:        &net.DNSError{Err: "no such host"},
+		rhttp.ErrKindDNS:        &net.DNSError{Err: "server misbehaving"},
 		rhttp.ErrKindTLS:        x509.UnknownAuthorityError{},
+
+		rhttp.ErrKindDNSNotFound: &net.DNSError{Err: "no such host", IsNotFound: true},
 	}
 
 	for kind, err := range producers {

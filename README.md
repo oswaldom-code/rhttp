@@ -275,19 +275,25 @@ if err != nil {
     case rhttp.ErrKindConnection:
         // Connection refused, reset, etc.
     case rhttp.ErrKindDNS:
-        // DNS resolution failed
+        // DNS resolution failed, transiently
+    case rhttp.ErrKindDNSNotFound:
+        // NXDOMAIN: the name does not exist. Permanent, never retried
     case rhttp.ErrKindTLS:
         // Certificate error
-    case rhttp.ErrKindTemporary:
-        // Temporary error, may resolve on retry
     }
 
     // Or use helpers
     if rhttp.IsRetryable(err) {
-        // Safe to retry (timeout, connection, DNS, temporary)
+        // Safe to retry (timeout, connection, transient DNS)
     }
 }
 ```
+
+`ErrKindDNS` and `ErrKindDNSNotFound` are split because they call for opposite
+handling: a SERVFAIL may clear on the next lookup, while an NXDOMAIN cannot —
+retrying it only spends the attempt budget and the full backoff schedule on an
+outcome that is already decided. `IsDNS` matches both; `IsDNSNotFound` singles
+out the permanent one.
 
 ## Middleware Order
 
@@ -344,7 +350,7 @@ transport := rhttp.DefaultTransport() // HTTP/2 enabled, optimized pool
 
 ## Benchmarks
 
-Two suites, measured 2026-07-25 on linux/amd64 (Intel Core i7-1255U, Go 1.24):
+Two suites, measured 2026-08-05 on linux/amd64 (Intel Core i7-1255U, Go 1.24.1):
 the in-repo microbenchmarks (`make bench`) measure client and middleware
 overhead against a no-op transport, and a standalone comparison harness
 ([`benchmarks/`](benchmarks/), `make report`) measures rhttp against Resty
@@ -359,7 +365,7 @@ Minimum of 5 runs:
 BenchmarkMiddlewareOverhead_Baseline-12            240 ns/op    656 B/op    4 allocs/op
 BenchmarkMiddlewareOverhead_WithRetry-12           272 ns/op    656 B/op    4 allocs/op
 BenchmarkMiddlewareOverhead_WithCircuitBreaker-12  266 ns/op    656 B/op    4 allocs/op
-BenchmarkMiddlewareOverhead_AllMiddleware-12      1030 ns/op   1589 B/op   13 allocs/op
+BenchmarkMiddlewareOverhead_AllMiddleware-12      1008 ns/op   1304 B/op   11 allocs/op
 BenchmarkStdHttpClient_Baseline-12                 256 ns/op    552 B/op    5 allocs/op
 BenchmarkTokenBucket_TryAcquire-12                  48 ns/op      0 B/op    0 allocs/op
 BenchmarkBackoffStrategies/Exponential-12            8 ns/op      0 B/op    0 allocs/op
@@ -375,23 +381,23 @@ Wrapper overhead (no-op transport, timeout + 3-attempt retry configured everywhe
 
 | Client | ns/op | allocs/op | vs best |
 |---|---:|---:|---:|
-| rhttp (Timeout+Retry) | 910 | 12 | 1.00x |
-| rhttp (Timeout+Retry+CircuitBreaker) | 946 | 12 | 1.04x |
-| net/http (Timeout only, no retry) | 1750 | 26 | 1.92x |
-| go-retryablehttp | 1775 | 26 | 1.95x |
-| Heimdall (retry) | 2555 | 32 | 2.81x |
-| Resty (retry) | 5818 | 48 | 6.39x |
+| rhttp (Timeout+Retry) | 784 | 10 | 1.00x |
+| rhttp (Timeout+Retry+CircuitBreaker) | 785 | 10 | 1.00x |
+| net/http (Timeout only, no retry) | 1672 | 26 | 2.13x |
+| go-retryablehttp | 1719 | 26 | 2.19x |
+| Heimdall (retry) | 2579 | 32 | 3.29x |
+| Resty (retry) | 5803 | 48 | 7.40x |
 
 End-to-end (~1 KB JSON over loopback):
 
 | Client | ns/op | allocs/op | vs best |
 |---|---:|---:|---:|
-| go-retryablehttp | 58309 | 74 | 1.00x |
-| net/http (Timeout only, no retry) | 60995 | 75 | 1.05x |
-| Heimdall (retry) | 61009 | 80 | 1.05x |
-| rhttp (Timeout+Retry) | 61923 | 76 | 1.06x |
-| rhttp (Timeout+Retry+CircuitBreaker) | 62817 | 76 | 1.08x |
-| Resty (retry) | 71696 | 96 | 1.23x |
+| go-retryablehttp | 60326 | 74 | 1.00x |
+| net/http (Timeout only, no retry) | 61578 | 75 | 1.02x |
+| Heimdall (retry) | 64415 | 80 | 1.07x |
+| rhttp (Timeout+Retry+CircuitBreaker) | 64939 | 74 | 1.08x |
+| rhttp (Timeout+Retry) | 66714 | 74 | 1.11x |
+| Resty (retry) | 73722 | 96 | 1.22x |
 
 **Read the caveats before quoting these numbers:**
 
@@ -467,7 +473,7 @@ All PRs must pass CI checks before merging.
 
 ## Roadmap
 
-> **Status:** v0.1.0 released (Phase 1 complete). Phase 2 is the next focus.
+> **Status:** v0.2.0 released (Phase 1 complete). Phase 2 is the next focus.
 
 ### Phase 1: Foundation (Completed)
 

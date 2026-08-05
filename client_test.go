@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/oswaldom-code/rhttp"
 )
@@ -35,6 +36,36 @@ func TestClient_Do_NilRequest(t *testing.T) {
 	_, err := c.Do(context.Background(), nil)
 	if err != rhttp.ErrInvalidRequest {
 		t.Fatalf("expected ErrInvalidRequest, got: %v", err)
+	}
+}
+
+func TestClient_Do_ShieldsCallerRequestFromMiddleware(t *testing.T) {
+	setHeader := func(next http.RoundTripper) http.RoundTripper {
+		return rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			req.Header.Set("X-Request-ID", "generated-in-chain")
+			return next.RoundTrip(req)
+		})
+	}
+
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Header.Get("X-Request-ID") == "" {
+			t.Error("expected the middleware header to reach the transport")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
+	})
+
+	c := rhttp.New(
+		rhttp.WithTransport(rt),
+		rhttp.WithMiddleware(setHeader, rhttp.Timeout(5*time.Second)),
+	)
+
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	if _, err := c.Do(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := req.Header.Get("X-Request-ID"); got != "" {
+		t.Fatalf("Do leaked a middleware header onto the caller's request: %q", got)
 	}
 }
 

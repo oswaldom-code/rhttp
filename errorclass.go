@@ -26,11 +26,15 @@ const (
 	// ErrKindConnection indicates a connection error (refused, reset, etc.).
 	ErrKindConnection
 
-	// ErrKindDNS indicates a DNS resolution failure.
+	// ErrKindDNS indicates a transient DNS resolution failure.
 	ErrKindDNS
 
 	// ErrKindTLS indicates a TLS/SSL error.
 	ErrKindTLS
+
+	// ErrKindDNSNotFound indicates the name does not exist (NXDOMAIN). Unlike
+	// ErrKindDNS this is permanent: retrying the same name cannot succeed.
+	ErrKindDNSNotFound
 )
 
 // String returns a human-readable name for the error kind.
@@ -44,6 +48,8 @@ func (k ErrorKind) String() string {
 		return "connection"
 	case ErrKindDNS:
 		return "dns"
+	case ErrKindDNSNotFound:
+		return "dns_not_found"
 	case ErrKindTLS:
 		return "tls"
 	default:
@@ -164,6 +170,9 @@ func classifyError(err error) ErrorKind {
 
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
+		if dnsErr.IsNotFound {
+			return ErrKindDNSNotFound
+		}
 		return ErrKindDNS
 	}
 
@@ -201,13 +210,24 @@ func IsConnection(err error) bool {
 	return classified.Kind == ErrKindConnection
 }
 
-// IsDNS returns true if the error is a DNS error.
+// IsDNS returns true if the error is a DNS error, whether transient or
+// permanent. Use IsDNSNotFound to single out the permanent case.
 func IsDNS(err error) bool {
 	if err == nil {
 		return false
 	}
 	classified := Classify(err)
-	return classified.Kind == ErrKindDNS
+	return classified.Kind == ErrKindDNS || classified.Kind == ErrKindDNSNotFound
+}
+
+// IsDNSNotFound returns true if the name does not exist (NXDOMAIN). Such an
+// error is permanent and is never retried by DefaultIsRetryable.
+func IsDNSNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	classified := Classify(err)
+	return classified.Kind == ErrKindDNSNotFound
 }
 
 // IsTLS returns true if the error is a TLS error.

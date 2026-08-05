@@ -395,7 +395,8 @@ func TestRetry_RespectsErrorClassification(t *testing.T) {
 		{"tls_not_retryable", tlsErr, 1},
 		{"canceled_not_retryable", context.Canceled, 1},
 		{"connection_retryable", syscall.ECONNREFUSED, 3},
-		{"dns_retryable", &net.DNSError{Err: "no such host"}, 3},
+		{"dns_transient_retryable", &net.DNSError{Err: "server misbehaving", IsTemporary: true}, 3},
+		{"dns_notfound_not_retryable", &net.DNSError{Err: "no such host", IsNotFound: true}, 1},
 		{"timeout_retryable", context.DeadlineExceeded, 3},
 	}
 
