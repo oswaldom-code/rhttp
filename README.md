@@ -562,7 +562,12 @@ All PRs must pass CI checks before merging.
 
 ## Roadmap
 
-> **Status:** v0.2.0 released (Phase 1 complete). Phase 2 is the next focus.
+> **Status:** Phase 1 is complete and v0.2.0 is the latest tag. Part of the
+> Phase 1 hardening documented above is not in that tag yet:
+> `RetryConfig.AttemptTimeout`, `CircuitBreakerConfig.OnStateChange`,
+> `CircuitBreakerWithState`, `OnInvalidConfig`, `NewTokenBucketE` and the
+> `ErrKindCircuitOpen` / `ErrKindRateLimited` kinds ship with the next release —
+> see `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md). Phase 2 is the next focus.
 
 ### Phase 1: Foundation (Completed)
 
@@ -578,7 +583,7 @@ All PRs must pass CI checks before merging.
 - [x] **Rate limiting** - Token bucket behind the pluggable RateLimiter interface
 - [x] **Logging middleware** - Pluggable `Logger` interface
 - [x] **Metrics middleware** - Pluggable `MetricsRecorder` interface
-- [x] **Error classification** - Timeout, connection, DNS, TLS, temporary
+- [x] **Error classification** - Timeout, cancellation, connection, DNS (transient and NXDOMAIN), TLS
 - [x] **Fluent API** - Resty-style `RequestBuilder` plus the `DecodeJSON` helper
 - [x] **Zero dependencies** - Only Go standard library
 
@@ -601,7 +606,7 @@ All PRs must pass CI checks before merging.
 
 ### Phase 4: Developer Experience
 
-- [ ] **Auto marshaling** - JSON, XML, Protocol Buffers, MessagePack
+- [ ] **Auto marshaling** - JSON, XML and form bodies already ship (`SetBodyJSON`, `SetBodyXML`, `SetBodyForm`, `DecodeJSON`); Protocol Buffers and MessagePack pending
 - [ ] **OAuth2 support** - Automatic token refresh
 - [ ] **Debug mode** - Request/response dump, curl generation
 - [ ] **Response validation** - JSON Schema, status assertions
