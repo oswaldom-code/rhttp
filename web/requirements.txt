@@ -1,0 +1,12 @@
+# Documentation site toolchain. Versions are pinned exactly, not floored.
+#
+# MkDocs 2.0 removes the plugin system and rewrites theming, with no migration
+# path; mkdocs-material will not follow it. Both plugins below depend on the
+# system 2.0 drops, so an unpinned install would break this build the day 2.0
+# lands. Bump these deliberately, never automatically.
+#
+# None of this reaches the Go module: rhttp itself stays dependency-free.
+
+mkdocs==1.6.1
+mkdocs-material==9.7.7
+mkdocs-static-i18n==1.3.1
