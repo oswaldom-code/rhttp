@@ -1,6 +1,7 @@
 package rhttp
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"time"
@@ -10,6 +11,14 @@ import (
 type RetryConfig struct {
 	// MaxAttempts is the maximum number of attempts (including the first one).
 	MaxAttempts int
+
+	// AttemptTimeout bounds each individual attempt. Zero means the attempt is
+	// bounded only by the caller's context, in which case the first attempt may
+	// consume the whole budget and no retry will be made.
+	//
+	// The per-attempt context is derived from the caller's, so it can only
+	// shorten the operation, never extend it.
+	AttemptTimeout time.Duration
 
 	// Backoff returns the duration to wait before the nth retry (0-indexed).
 	// It receives the response of the attempt that triggered the retry (nil if
@@ -52,7 +61,7 @@ type retryRoundTripper struct {
 
 func (r retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !r.canRetry(req) {
-		return r.next.RoundTrip(req)
+		return r.attempt(req)
 	}
 
 	var resp *http.Response
@@ -72,7 +81,7 @@ func (r retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 			return nil, prepErr
 		}
 
-		resp, err = r.next.RoundTrip(attemptReq)
+		resp, err = r.attempt(attemptReq)
 
 		if !r.cfg.IsRetryable(resp, err) {
 			return resp, err
@@ -112,6 +121,28 @@ func (r retryRoundTripper) prepareRequest(req *http.Request, attempt int) (*http
 	}
 
 	return attemptReq, nil
+}
+
+func (r retryRoundTripper) attempt(req *http.Request) (*http.Response, error) {
+	if r.cfg.AttemptTimeout <= 0 {
+		return r.next.RoundTrip(req)
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), r.cfg.AttemptTimeout)
+
+	resp, err := r.next.RoundTrip(req.WithContext(ctx))
+	if err != nil {
+		cancel()
+		return resp, err
+	}
+
+	if resp.Body == nil {
+		cancel()
+		return resp, nil
+	}
+
+	resp.Body = &cancelBody{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
 }
 
 func (r retryRoundTripper) waitBackoff(req *http.Request, attempt int, prev *http.Response) error {

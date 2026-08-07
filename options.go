@@ -17,6 +17,10 @@ func defaultConfig() *config {
 }
 
 // WithTransport sets a custom http.RoundTripper.
+//
+// A nil transport is discarded and DefaultTransport is kept, so no protection is
+// lost. Unlike the middleware constructors, this case is not reported through
+// OnInvalidConfig.
 func WithTransport(rt http.RoundTripper) Option {
 	return func(c *config) {
 		if rt != nil {

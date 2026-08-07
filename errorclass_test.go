@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/oswaldom-code/rhttp"
 )
@@ -331,6 +334,9 @@ func TestClassify_AllKindsAreReachable(t *testing.T) {
 		rhttp.ErrKindTLS:        x509.UnknownAuthorityError{},
 
 		rhttp.ErrKindDNSNotFound: &net.DNSError{Err: "no such host", IsNotFound: true},
+
+		rhttp.ErrKindCircuitOpen: rhttp.ErrCircuitOpen,
+		rhttp.ErrKindRateLimited: rhttp.ErrRateLimited,
 	}
 
 	for kind, err := range producers {
@@ -367,5 +373,105 @@ func TestIsRetryable(t *testing.T) {
 	}
 	if rhttp.IsRetryable(nil) {
 		t.Error("expected nil to not be retryable")
+	}
+}
+
+func TestClassify_Sentinels(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		kind rhttp.ErrorKind
+		want string
+	}{
+		{"circuit open", rhttp.ErrCircuitOpen, rhttp.ErrKindCircuitOpen, "circuit_open"},
+		{"rate limited", rhttp.ErrRateLimited, rhttp.ErrKindRateLimited, "rate_limited"},
+		{
+			"circuit open wrapped",
+			fmt.Errorf("calling users service: %w", rhttp.ErrCircuitOpen),
+			rhttp.ErrKindCircuitOpen,
+			"circuit_open",
+		},
+		{
+			"rate limited wrapped",
+			fmt.Errorf("calling users service: %w", rhttp.ErrRateLimited),
+			rhttp.ErrKindRateLimited,
+			"rate_limited",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			classified := rhttp.Classify(tt.err)
+
+			if classified.Kind != tt.kind {
+				t.Errorf("Kind = %v, want %v", classified.Kind, tt.kind)
+			}
+			if got := classified.Kind.String(); got != tt.want {
+				t.Errorf("Kind.String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassify_SentinelsStayNonRetryable(t *testing.T) {
+	for _, err := range []error{rhttp.ErrCircuitOpen, rhttp.ErrRateLimited} {
+		if rhttp.IsRetryable(err) {
+			t.Errorf("IsRetryable(%v) = true, want false", err)
+		}
+		if rhttp.DefaultIsRetryable(nil, err) {
+			t.Errorf("DefaultIsRetryable(nil, %v) = true, want false", err)
+		}
+	}
+}
+
+func TestErrorKind_SentinelKindsAreAppended(t *testing.T) {
+	if rhttp.ErrKindUnknown != 0 {
+		t.Errorf("ErrKindUnknown = %d, want 0", rhttp.ErrKindUnknown)
+	}
+	if rhttp.ErrKindCircuitOpen <= rhttp.ErrKindDNSNotFound {
+		t.Error("ErrKindCircuitOpen must come after ErrKindDNSNotFound")
+	}
+	if rhttp.ErrKindRateLimited <= rhttp.ErrKindCircuitOpen {
+		t.Error("ErrKindRateLimited must come after ErrKindCircuitOpen")
+	}
+}
+
+func TestClassify_MetricsAboveBreakerNameTheOutcome(t *testing.T) {
+	rt := rhttp.RoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+	})
+
+	var kinds []string
+	c := rhttp.New(
+		rhttp.WithTransport(rt),
+		rhttp.WithMiddleware(
+			rhttp.Metrics(rhttp.MetricsConfig{
+				Recorder: rhttp.MetricsRecorderFunc(func(e rhttp.MetricEvent) {
+					if e.Error != nil {
+						kinds = append(kinds, rhttp.Classify(e.Error).Kind.String())
+					}
+				}),
+			}),
+			rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
+				FailureThreshold: 2,
+				ResetTimeout:     time.Hour,
+			}),
+		),
+	)
+
+	for i := 0; i < 6; i++ {
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+		_, _ = c.Do(context.Background(), req)
+	}
+
+	want := []string{"connection", "connection", "circuit_open", "circuit_open", "circuit_open", "circuit_open"}
+
+	if len(kinds) != len(want) {
+		t.Fatalf("kinds = %v, want %v", kinds, want)
+	}
+	for i := range want {
+		if kinds[i] != want[i] {
+			t.Errorf("kind %d = %q, want %q (full: %v)", i, kinds[i], want[i], kinds)
+		}
 	}
 }

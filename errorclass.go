@@ -35,6 +35,14 @@ const (
 	// ErrKindDNSNotFound indicates the name does not exist (NXDOMAIN). Unlike
 	// ErrKindDNS this is permanent: retrying the same name cannot succeed.
 	ErrKindDNSNotFound
+
+	// ErrKindCircuitOpen indicates the client's own circuit breaker refused the
+	// call: the request never reached the network.
+	ErrKindCircuitOpen
+
+	// ErrKindRateLimited indicates the client's own quota refused the call: the
+	// request never reached the network.
+	ErrKindRateLimited
 )
 
 // String returns a human-readable name for the error kind.
@@ -52,12 +60,20 @@ func (k ErrorKind) String() string {
 		return "dns_not_found"
 	case ErrKindTLS:
 		return "tls"
+	case ErrKindCircuitOpen:
+		return "circuit_open"
+	case ErrKindRateLimited:
+		return "rate_limited"
 	default:
 		return "unknown"
 	}
 }
 
 // IsRetryable returns true if the error kind is typically safe to retry.
+//
+// ErrKindCircuitOpen and ErrKindRateLimited are deliberately absent: both are
+// the client protecting itself, and retrying inside the same operation defeats
+// the protection that produced them.
 func (k ErrorKind) IsRetryable() bool {
 	switch k {
 	case ErrKindTimeout, ErrKindConnection, ErrKindDNS:
@@ -141,9 +157,40 @@ func classifyConnection(err error) ErrorKind {
 	return ErrKindUnknown
 }
 
+// classifySentinel matches one of the package's own sentinels by identity: two
+// interface comparisons, cheap enough to run before any transport inspection,
+// and unwrapped is how these two travel in practice.
+func classifySentinel(err error) ErrorKind {
+	switch err {
+	case ErrCircuitOpen:
+		return ErrKindCircuitOpen
+	case ErrRateLimited:
+		return ErrKindRateLimited
+	default:
+		return ErrKindUnknown
+	}
+}
+
+// classifyWrappedSentinel matches a sentinel anywhere in the error chain. It
+// walks, so it runs only once every transport branch has missed.
+func classifyWrappedSentinel(err error) ErrorKind {
+	if errors.Is(err, ErrCircuitOpen) {
+		return ErrKindCircuitOpen
+	}
+	if errors.Is(err, ErrRateLimited) {
+		return ErrKindRateLimited
+	}
+
+	return ErrKindUnknown
+}
+
 func classifyError(err error) ErrorKind {
 	if err == nil {
 		return ErrKindUnknown
+	}
+
+	if kind := classifySentinel(err); kind != ErrKindUnknown {
+		return kind
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -180,7 +227,11 @@ func classifyError(err error) ErrorKind {
 		return kind
 	}
 
-	return classifyConnection(err)
+	if kind := classifyConnection(err); kind != ErrKindUnknown {
+		return kind
+	}
+
+	return classifyWrappedSentinel(err)
 }
 
 // IsTimeout returns true if the error is a timeout error.

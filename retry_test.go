@@ -539,3 +539,158 @@ func TestRetry_BackoffCanceledClosesRequestBody(t *testing.T) {
 		t.Error("request body was not closed when backoff was canceled")
 	}
 }
+
+// unresponsiveTransport answers no request before its context is done, and
+// counts the attempts that reach it.
+func unresponsiveTransport(attempts *atomic.Int64) rhttp.RoundTripperFunc {
+	return func(req *http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		select {
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		case <-time.After(5 * time.Second):
+			return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
+		}
+	}
+}
+
+// contextAwareBody fails once its request context is done, the way a real
+// transport body does.
+type contextAwareBody struct {
+	ctx  context.Context
+	data string
+	read bool
+}
+
+func (b *contextAwareBody) Read(p []byte) (int, error) {
+	if err := b.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if b.read {
+		return 0, io.EOF
+	}
+	b.read = true
+	return copy(p, b.data), nil
+}
+
+func (b *contextAwareBody) Close() error { return nil }
+
+// Regression: a deadline on the caller's context bounds the operation, not each
+// attempt, so against a slow dependency the first attempt consumed the whole
+// budget and MaxAttempts was silently reduced to 1. AttemptTimeout gives each
+// attempt its own budget without depending on middleware order.
+func TestRetry_AttemptTimeoutHonoursTheBudget(t *testing.T) {
+	var attempts atomic.Int64
+
+	c := rhttp.New(
+		rhttp.WithTransport(unresponsiveTransport(&attempts)),
+		rhttp.WithMiddleware(rhttp.Retry(rhttp.RetryConfig{
+			MaxAttempts:    3,
+			AttemptTimeout: 50 * time.Millisecond,
+			Backoff:        rhttp.ConstantBackoff(10 * time.Millisecond),
+		})),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	if _, err := c.Do(ctx, req); err == nil {
+		t.Fatal("expected an error from the unresponsive transport")
+	}
+
+	if got := attempts.Load(); got != 3 {
+		t.Errorf("attempts = %d, want 3", got)
+	}
+}
+
+// A zero AttemptTimeout must leave the previous semantics untouched: the attempt
+// is bounded only by the caller's context, so a first attempt that exhausts the
+// deadline still consumes the whole budget.
+func TestRetry_AttemptTimeoutZeroKeepsContextSemantics(t *testing.T) {
+	var attempts atomic.Int64
+
+	c := rhttp.New(
+		rhttp.WithTransport(unresponsiveTransport(&attempts)),
+		rhttp.WithMiddleware(rhttp.Retry(rhttp.RetryConfig{
+			MaxAttempts: 3,
+			Backoff:     rhttp.ConstantBackoff(10 * time.Millisecond),
+		})),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	if _, err := c.Do(ctx, req); err == nil {
+		t.Fatal("expected an error from the unresponsive transport")
+	}
+
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("attempts = %d, want 1", got)
+	}
+}
+
+// The per-attempt context is derived from the caller's, so it can only shorten
+// the operation, never extend it.
+func TestRetry_AttemptTimeoutDoesNotExtendCallerDeadline(t *testing.T) {
+	var attempts atomic.Int64
+
+	c := rhttp.New(
+		rhttp.WithTransport(unresponsiveTransport(&attempts)),
+		rhttp.WithMiddleware(rhttp.Retry(rhttp.RetryConfig{
+			MaxAttempts:    3,
+			AttemptTimeout: 5 * time.Second,
+			Backoff:        rhttp.ConstantBackoff(10 * time.Millisecond),
+		})),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+
+	start := time.Now()
+	if _, err := c.Do(ctx, req); err == nil {
+		t.Fatal("expected an error from the unresponsive transport")
+	}
+
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("the call took %v: AttemptTimeout must not outlive the caller's deadline", elapsed)
+	}
+}
+
+// The per-attempt context is released through the response body, so a response
+// handed back to the caller must still be readable.
+func TestRetry_AttemptTimeoutLastAttemptBodyReadable(t *testing.T) {
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       &contextAwareBody{ctx: req.Context(), data: "payload"},
+			Request:    req,
+		}, nil
+	})
+
+	c := rhttp.New(
+		rhttp.WithTransport(rt),
+		rhttp.WithMiddleware(rhttp.Retry(rhttp.RetryConfig{
+			MaxAttempts:    3,
+			AttemptTimeout: time.Second,
+		})),
+	)
+
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	resp, err := c.Do(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the body: %v; the per-attempt context was canceled too early", err)
+	}
+	if string(body) != "payload" {
+		t.Errorf("body = %q, want %q", body, "payload")
+	}
+}

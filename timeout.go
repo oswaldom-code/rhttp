@@ -2,6 +2,7 @@ package rhttp
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -9,9 +10,15 @@ import (
 
 // Timeout returns a middleware that applies a timeout to requests.
 // If the request's context already has a shorter deadline, it is respected.
-// A non-positive duration disables the middleware (it becomes a no-op).
+//
+// A non-positive duration is not a timeout, so the middleware falls back to a
+// pass-through. That fallback is reported through OnInvalidConfig: it leaves the
+// request bounded only by the caller's context, and DefaultTransport bounds
+// neither dialing nor the wait for response headers.
 func Timeout(d time.Duration) Middleware {
 	if d <= 0 {
+		reportInvalidConfig("Timeout", fmt.Sprintf(
+			"duration is %v: requests are not bounded by this middleware", d))
 		return func(next http.RoundTripper) http.RoundTripper {
 			return next
 		}
