@@ -27,3 +27,6 @@ Thumbs.db
 
 # Debug
 __debug_bin*
+
+# Documentation site build output
+/web/site/

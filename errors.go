@@ -11,4 +11,8 @@ var (
 
 	// ErrRateLimited is returned when the rate limit is exceeded and WaitOnLimit is false.
 	ErrRateLimited = errors.New("rhttp: rate limit exceeded")
+
+	// ErrInvalidRateLimit is returned by NewTokenBucketE for a rate or burst that
+	// cannot produce a limiter.
+	ErrInvalidRateLimit = errors.New("rhttp: invalid rate limit")
 )

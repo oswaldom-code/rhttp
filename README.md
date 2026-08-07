@@ -192,6 +192,35 @@ State machine: `Closed → Open → Half-Open → Closed/Open`
 
 Returns `rhttp.ErrCircuitOpen` when circuit is open.
 
+**Observing transitions.** Use `OnStateChange`, not a poll:
+
+```go
+rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
+    FailureThreshold: 5,
+    ResetTimeout:     30 * time.Second,
+    OnStateChange: func(from, to rhttp.CircuitState) {
+        log.Printf("circuit %s -> %s", from, to)
+    },
+})
+```
+
+At the default `SuccessThreshold` of 1, the half-open phase is entered and left
+inside a single `RoundTrip`, so **no polling frequency can sample it** — a poller
+sees `closed → open → closed` and the recovery mechanism is invisible. The
+callback reports rather than samples, so a transition lasting nanoseconds still
+shows up. It runs with the breaker's mutex released, on the goroutine of the
+request that caused the transition, so reading `State()` from inside it is safe;
+it must not block, because the request cannot proceed until it returns.
+
+When you need a handle to the breaker itself, use `CircuitBreakerWithState` (or
+`NewCircuitBreaker(...).Middleware()` to share one circuit across clients):
+
+```go
+mw, breaker := rhttp.CircuitBreakerWithState(cfg)
+client := rhttp.New(rhttp.WithMiddleware(mw))
+_ = breaker.State()
+```
+
 ### Rate Limiting
 
 ```go
@@ -208,6 +237,37 @@ client := rhttp.New(
     ),
 )
 ```
+
+A non-positive rate or a burst below 1 cannot produce a limiter, so
+`NewTokenBucket` falls back to not limiting. When the values come from
+configuration, use `NewTokenBucketE` and fail at startup instead:
+
+```go
+limiter, err := rhttp.NewTokenBucketE(cfg.Rate, cfg.Burst)
+if err != nil {
+    return err // errors.Is(err, rhttp.ErrInvalidRateLimit)
+}
+```
+
+### Invalid configuration
+
+`Timeout(0)`, `RateLimit{Limiter: nil}` and `NewTokenBucket(0, …)` fall back to a
+pass-through rather than busy-looping or blocking forever. The fallback is safe,
+but a protection that is silently absent gets discovered during the incident it
+was meant to prevent — so set `OnInvalidConfig` at startup and find out at deploy
+time instead:
+
+```go
+func init() {
+    rhttp.OnInvalidConfig = func(component, reason string) {
+        log.Printf("rhttp: %s is inert: %s", component, reason)
+    }
+}
+```
+
+Nil by default. `Metrics{Recorder: nil}` and `Logging{Logger: nil}` stay silent by
+design: there the zero value means "observability not configured", which is a
+legitimate default and loses no protection.
 
 ### Logging
 
@@ -280,6 +340,10 @@ if err != nil {
         // NXDOMAIN: the name does not exist. Permanent, never retried
     case rhttp.ErrKindTLS:
         // Certificate error
+    case rhttp.ErrKindCircuitOpen:
+        // The client's own breaker refused the call: never reached the network
+    case rhttp.ErrKindRateLimited:
+        // The client's own quota refused the call: never reached the network
     }
 
     // Or use helpers
@@ -288,6 +352,13 @@ if err != nil {
     }
 }
 ```
+
+`ErrKindCircuitOpen` and `ErrKindRateLimited` name the two outcomes the client
+produces itself. They matter most where classification is wired into metrics: a
+breaker engaging is the most informative signal the stack emits — the moment the
+protection kicked in — and it must not share a bucket with "a failure this
+library could not identify". Neither is retryable: retrying inside the same
+operation would defeat the protection that produced the error.
 
 `ErrKindDNS` and `ErrKindDNSNotFound` are split because they call for opposite
 handling: a SERVFAIL may clear on the next lookup, while an NXDOMAIN cannot —
@@ -324,6 +395,24 @@ Where you put `Timeout` relative to `Retry` selects one of two semantics — bot
 | **Per-attempt timeout** | `Retry → Timeout` | Each attempt gets its **own fresh timeout**; the total wall-clock time is roughly `attempts × timeout` plus backoffs. |
 
 See the runnable `ExampleRetry_totalBudget` and `ExampleRetry_perAttemptTimeout` for both wirings.
+
+`RetryConfig.AttemptTimeout` expresses the per-attempt semantics without
+depending on the order:
+
+```go
+rhttp.Retry(rhttp.RetryConfig{
+    MaxAttempts:    3,
+    AttemptTimeout: 2 * time.Second, // each attempt, wherever Timeout sits
+})
+```
+
+This matters because **a deadline on the caller's context bounds the operation,
+not each attempt**. Against a dependency that has become slow rather than one
+that fails fast, the first attempt can consume the whole deadline and no retry
+happens at all — `MaxAttempts: 3` yields one request on the wire, and the error,
+the log and the metric all report a plain timeout. Set `AttemptTimeout`, or place
+`Timeout` immediately beneath `Retry` and verify it with a counting middleware
+below both; there is no other way to tell the two configurations apart.
 
 ### Retry vs CircuitBreaker
 
@@ -473,7 +562,12 @@ All PRs must pass CI checks before merging.
 
 ## Roadmap
 
-> **Status:** v0.2.0 released (Phase 1 complete). Phase 2 is the next focus.
+> **Status:** Phase 1 is complete and v0.2.0 is the latest tag. Part of the
+> Phase 1 hardening documented above is not in that tag yet:
+> `RetryConfig.AttemptTimeout`, `CircuitBreakerConfig.OnStateChange`,
+> `CircuitBreakerWithState`, `OnInvalidConfig`, `NewTokenBucketE` and the
+> `ErrKindCircuitOpen` / `ErrKindRateLimited` kinds ship with the next release —
+> see `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md). Phase 2 is the next focus.
 
 ### Phase 1: Foundation (Completed)
 
@@ -489,7 +583,7 @@ All PRs must pass CI checks before merging.
 - [x] **Rate limiting** - Token bucket behind the pluggable RateLimiter interface
 - [x] **Logging middleware** - Pluggable `Logger` interface
 - [x] **Metrics middleware** - Pluggable `MetricsRecorder` interface
-- [x] **Error classification** - Timeout, connection, DNS, TLS, temporary
+- [x] **Error classification** - Timeout, cancellation, connection, DNS (transient and NXDOMAIN), TLS
 - [x] **Fluent API** - Resty-style `RequestBuilder` plus the `DecodeJSON` helper
 - [x] **Zero dependencies** - Only Go standard library
 
@@ -512,7 +606,7 @@ All PRs must pass CI checks before merging.
 
 ### Phase 4: Developer Experience
 
-- [ ] **Auto marshaling** - JSON, XML, Protocol Buffers, MessagePack
+- [ ] **Auto marshaling** - JSON, XML and form bodies already ship (`SetBodyJSON`, `SetBodyXML`, `SetBodyForm`, `DecodeJSON`); Protocol Buffers and MessagePack pending
 - [ ] **OAuth2 support** - Automatic token refresh
 - [ ] **Debug mode** - Request/response dump, curl generation
 - [ ] **Response validation** - JSON Schema, status assertions

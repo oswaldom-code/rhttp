@@ -487,3 +487,46 @@ func TestRateLimit_RespectRetryAfterConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// NewTokenBucket falls back to not limiting on invalid configuration, which is
+// indistinguishable from a correctly configured bucket until the load it was
+// meant to shape arrives. NewTokenBucketE reports it instead.
+func TestNewTokenBucketE_InvalidConfigIsAnError(t *testing.T) {
+	tests := []struct {
+		name  string
+		rate  float64
+		burst int
+	}{
+		{"zero rate", 0, 10},
+		{"negative rate", -1, 10},
+		{"zero burst", 10, 0},
+		{"negative burst", 10, -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bucket, err := rhttp.NewTokenBucketE(tt.rate, tt.burst)
+
+			if !errors.Is(err, rhttp.ErrInvalidRateLimit) {
+				t.Errorf("error = %v, want it to wrap ErrInvalidRateLimit", err)
+			}
+			if bucket != nil {
+				t.Error("an invalid configuration must not yield a usable bucket")
+			}
+		})
+	}
+}
+
+func TestNewTokenBucketE_ValidConfigLimits(t *testing.T) {
+	bucket, err := rhttp.NewTokenBucketE(10, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !bucket.TryAcquire() {
+		t.Error("a valid bucket should admit its first request")
+	}
+	if bucket.TryAcquire() {
+		t.Error("a burst of 1 should admit only one request")
+	}
+}

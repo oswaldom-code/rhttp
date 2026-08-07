@@ -202,3 +202,18 @@ func BenchmarkClassify_Error(b *testing.B) {
 		_ = rhttp.Classify(err)
 	}
 }
+
+// Guards the identity check at the top of classifyError. Without it an
+// unwrapped sentinel falls through every transport branch to the errors.Is at
+// the bottom, which measured 535 ns and 8 allocs — the escaping errors.As
+// targets — against the ~2 ns here.
+func BenchmarkClassify_Sentinel(b *testing.B) {
+	err := rhttp.ErrCircuitOpen
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_ = rhttp.Classify(err)
+	}
+}
