@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Four reports from `docs/issues` closed. Every change is additive and backward
+Four reported issues closed. Every change is additive and backward
 compatible: no existing behavior changes unless a new field or hook is set.
 
 ### Added

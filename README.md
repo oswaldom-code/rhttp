@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/banner.svg" alt="rhttp - resilient HTTP client for Go, zero dependencies" width="830">
+  <img src="web/docs/assets/banner.svg" alt="rhttp - resilient HTTP client for Go, zero dependencies" width="830">
 </p>
 
 # rhttp
