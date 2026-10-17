@@ -1,3 +1,8 @@
+//go:build go1.23
+
+// Allocation counts depend on the compiler's escape analysis. The ceilings
+// below are measured on Go 1.23+, where the Performance workflow runs them.
+
 package rhttp_test
 
 import (
