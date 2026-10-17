@@ -6,12 +6,30 @@
 
 Production-grade HTTP client for Go with built-in resiliency patterns.
 
-[![CI](https://github.com/oswaldom-code/rhttp/actions/workflows/ci.yml/badge.svg)](https://github.com/oswaldom-code/rhttp/actions/workflows/ci.yml)
+[![Tests](https://github.com/oswaldom-code/rhttp/actions/workflows/tests.yml/badge.svg)](https://github.com/oswaldom-code/rhttp/actions/workflows/tests.yml)
+[![Static Analysis](https://github.com/oswaldom-code/rhttp/actions/workflows/static-analysis.yml/badge.svg)](https://github.com/oswaldom-code/rhttp/actions/workflows/static-analysis.yml)
+[![Coding Style](https://github.com/oswaldom-code/rhttp/actions/workflows/coding-style.yml/badge.svg)](https://github.com/oswaldom-code/rhttp/actions/workflows/coding-style.yml)
+[![Security](https://github.com/oswaldom-code/rhttp/actions/workflows/security.yml/badge.svg)](https://github.com/oswaldom-code/rhttp/actions/workflows/security.yml)
+[![Performance](https://github.com/oswaldom-code/rhttp/actions/workflows/performance.yml/badge.svg)](https://github.com/oswaldom-code/rhttp/actions/workflows/performance.yml)
+
+[![gosec](https://img.shields.io/badge/gosec-enabled-E34C26?logo=go&logoColor=white)](https://github.com/oswaldom-code/rhttp/actions/workflows/security.yml)
+[![govulncheck](https://img.shields.io/badge/govulncheck-enabled-00ADD8?logo=go&logoColor=white)](https://github.com/oswaldom-code/rhttp/actions/workflows/security.yml)
+[![Semgrep](https://img.shields.io/badge/Semgrep-enabled-1B2A4E?logo=semgrep&logoColor=white)](https://github.com/oswaldom-code/rhttp/actions/workflows/security.yml)
+[![Trivy](https://img.shields.io/badge/Trivy-enabled-1904DA?logo=aquasecurity&logoColor=white)](https://github.com/oswaldom-code/rhttp/actions/workflows/security.yml)
+
+[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/github/v/tag/oswaldom-code/rhttp?filter=v*&sort=semver&label=version&color=blue)](https://github.com/oswaldom-code/rhttp/tags)
+[![Latest Release](https://img.shields.io/github/v/release/oswaldom-code/rhttp?display_name=tag&label=latest&color=brightgreen)](https://github.com/oswaldom-code/rhttp/releases/latest)
+[![Security Policy](https://img.shields.io/badge/Security-Policy-red?logo=github)](SECURITY.md)
 [![codecov](https://codecov.io/gh/oswaldom-code/rhttp/branch/main/graph/badge.svg)](https://codecov.io/gh/oswaldom-code/rhttp)
 [![Go Report Card](https://goreportcard.com/badge/github.com/oswaldom-code/rhttp)](https://goreportcard.com/report/github.com/oswaldom-code/rhttp)
 [![Go Reference](https://pkg.go.dev/badge/github.com/oswaldom-code/rhttp.svg)](https://pkg.go.dev/github.com/oswaldom-code/rhttp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
+
+[![Overhead](https://img.shields.io/badge/Overhead-~1%20%CE%BCs%2Freq-2ea44f?style=flat-square)](#benchmarks)
+[![Rate limiter](https://img.shields.io/badge/Rate%20limiter-0%20alloc-2ea44f?style=flat-square)](https://github.com/oswaldom-code/rhttp/actions/workflows/performance.yml)
+[![Backoff](https://img.shields.io/badge/Backoff-0%20alloc-2ea44f?style=flat-square)](https://github.com/oswaldom-code/rhttp/actions/workflows/performance.yml)
+[![Deps](https://img.shields.io/badge/Dependencies-0-lightgrey?style=flat-square)](go.mod)
 
 ## Motivation
 
@@ -539,13 +557,16 @@ make clean         # Clean build artifacts
 
 ### CI Pipeline
 
-The project uses GitHub Actions for CI with:
+Five GitHub Actions workflows run on every push and pull request. Each one
+backs a badge at the top of this README:
 
-- Tests on Go 1.21, 1.22, and 1.23
-- Race detector enabled
-- golangci-lint for code quality
-- Coverage reporting
-- Benchmark tracking on PRs
+| Workflow | What it enforces |
+|----------|------------------|
+| Tests | Race-enabled suite on Go 1.21, 1.22 and 1.23, coverage upload, build and tidy `go.mod` |
+| Static Analysis | `go vet` and `staticcheck` |
+| Coding Style | `gofmt` and `golangci-lint` |
+| Security | `gosec`, `govulncheck`, Semgrep (`p/golang`) and Trivy. See [SECURITY.md](SECURITY.md) |
+| Performance | Allocation gates from `gate_test.go` (backoff 0, rate limiter 0, full stack ≤ 11 allocs/op) plus benchmark tracking on PRs |
 
 ## Contributing
 
