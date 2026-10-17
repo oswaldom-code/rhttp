@@ -30,6 +30,20 @@ compatible: no existing behavior changes unless a new field or hook is set.
 - `Classify` is unchanged on the common path: the two sentinels are matched by identity before the transport branches, and by `errors.Is` after them for the wrapped case. Classifying a transport failure stays at ~7.4 ns and zero allocations (measured against ~7.3 ns before the change); an unwrapped sentinel costs ~2.2 ns. Using only `errors.Is` measured 22 ns on the common path when placed first, and 535 ns with 8 allocations on the sentinel path when placed last, so both positions are used deliberately. `BenchmarkClassify_Sentinel` guards the identity check.
 - The full middleware stack is unchanged at 12 allocations; the retry and circuit-breaker paths add no allocation when `AttemptTimeout` is zero and `OnStateChange` is nil.
 
+## [0.2.1] - 2026-10-17
+
+No library code changes from 0.2.0.
+
+### Added
+
+- `SECURITY.md` with the supported versions and the private reporting channel.
+- Allocation gates (`TestAllocs_*`) that fail the build when a zero-allocation promise or the full-stack ceiling is broken.
+
+### Changed
+
+- CI split into five workflows (Tests, Static Analysis, Coding Style, Security, Performance). Security adds `gosec`, `govulncheck`, Semgrep and Trivy.
+- Packaging fix: v0.1.0 and v0.2.0 are retracted; their module archives included development files not intended for distribution. Use v0.2.1.
+
 ## [0.2.0] - 2026-08-05
 
 ### Added
@@ -64,5 +78,6 @@ First public release.
 - Error classification: `Classify`, `IsRetryable`, `IsTimeout`, `IsConnection`, and related helpers.
 - Zero external dependencies; Go standard library only.
 
+[0.2.1]: https://github.com/oswaldom-code/rhttp/releases/tag/v0.2.1
 [0.2.0]: https://github.com/oswaldom-code/rhttp/releases/tag/v0.2.0
 [0.1.0]: https://github.com/oswaldom-code/rhttp/releases/tag/v0.1.0
