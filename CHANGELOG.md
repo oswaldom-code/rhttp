@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-10-17
+
+No library code changes from 0.2.0.
+
+### Added
+
+- `SECURITY.md` with the supported versions and the private reporting channel.
+- Allocation gates (`TestAllocs_*`) that fail the build when a zero-allocation promise or the full-stack ceiling is broken.
+
+### Changed
+
+- CI split into five workflows (Tests, Static Analysis, Coding Style, Security, Performance). Security adds `gosec`, `govulncheck`, Semgrep and Trivy.
+- Packaging fix: v0.1.0 and v0.2.0 are retracted; their module archives included development files not intended for distribution. Use v0.2.1.
+
 ## [0.2.0] - 2026-08-05
 
 ### Added
@@ -39,5 +53,6 @@ First public release.
 - Error classification: `Classify`, `IsRetryable`, `IsTimeout`, `IsConnection`, and related helpers.
 - Zero external dependencies; Go standard library only.
 
+[0.2.1]: https://github.com/oswaldom-code/rhttp/releases/tag/v0.2.1
 [0.2.0]: https://github.com/oswaldom-code/rhttp/releases/tag/v0.2.0
 [0.1.0]: https://github.com/oswaldom-code/rhttp/releases/tag/v0.1.0
