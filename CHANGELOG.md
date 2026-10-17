@@ -18,6 +18,7 @@ compatible: no existing behavior changes unless a new field or hook is set.
 - `CircuitBreakerWithState` returns the middleware together with the breaker it built. The plain `CircuitBreaker` form discards it, leaving the state of a circuit configured that way unreachable.
 - `OnInvalidConfig`, a package-level hook called when a constructor receives configuration it cannot apply and falls back to a pass-through. `Timeout(0)`, `RateLimit{Limiter: nil}` and `NewTokenBucket(0, …)` used to lose a requested protection in complete silence — a client that looks identical to a correctly configured one until the day the protection was needed. Nil by default, which keeps the previous silence. `Metrics{Recorder: nil}` and `Logging{Logger: nil}` stay silent by design: the zero value there means "observability not configured", which is a legitimate default.
 - `NewTokenBucketE`, `NewTokenBucket` with the invalid cases returned as an error wrapping the new `ErrInvalidRateLimit` sentinel, instead of degraded to a bucket that does not limit.
+- `examples/chucknorris`, a runnable example against a public API showing the recommended middleware order, `AttemptTimeout`, `OnStateChange` and `OnInvalidConfig` wired together.
 
 ### Changed
 
