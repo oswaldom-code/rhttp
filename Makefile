@@ -117,7 +117,7 @@ clean:
 install-tools:
 	@echo "$(GREEN)Installing development tools...$(NC)"
 	@echo "Installing golangci-lint..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
 	@echo "Installing pkgsite..."
 	go install golang.org/x/pkgsite/cmd/pkgsite@latest
 	@echo "$(GREEN)Done! Make sure $(GOPATH)/bin is in your PATH.$(NC)"

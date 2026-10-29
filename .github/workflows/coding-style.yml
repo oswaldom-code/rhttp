@@ -33,7 +33,9 @@ jobs:
           fi
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          # Pinned, and kept in sync with install-tools in the Makefile, so the
+          # linter that runs locally is the one CI runs.
+          version: v2.14.0
           args: --timeout=5m

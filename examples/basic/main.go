@@ -150,7 +150,9 @@ func printBody(body io.Reader) {
 	if err := json.Unmarshal(data, &prettyJSON); err == nil {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(prettyJSON)
+		if err := enc.Encode(prettyJSON); err != nil {
+			log.Printf("Error encoding body: %v", err)
+		}
 	} else {
 		fmt.Println(string(data))
 	}

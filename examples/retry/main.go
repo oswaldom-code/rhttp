@@ -20,7 +20,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
@@ -42,10 +41,10 @@ func attemptLogger(next http.RoundTripper) http.RoundTripper {
 		start := time.Now()
 		resp, err := next.RoundTrip(req)
 		if err != nil {
-			log.Printf("  attempt %s %s -> error: %v", req.Method, req.URL.Path, err)
+			fmt.Printf("  attempt %s %s -> error: %v\n", req.Method, req.URL.Path, err)
 			return resp, err
 		}
-		log.Printf("  attempt %s %s -> %d (%s)", req.Method, req.URL.Path, resp.StatusCode, time.Since(start).Round(time.Millisecond))
+		fmt.Printf("  attempt %s %s -> %d (%s)\n", req.Method, req.URL.Path, resp.StatusCode, time.Since(start).Round(time.Millisecond))
 		return resp, err
 	})
 }

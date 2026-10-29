@@ -208,58 +208,58 @@ func (rb *RequestBuilder) SetBodyForm(data map[string]string) *RequestBuilder {
 }
 
 // Get executes a GET request.
-func (rb *RequestBuilder) Get(url string) (*http.Response, error) {
+func (rb *RequestBuilder) Get(rawURL string) (*http.Response, error) {
 	rb.method = http.MethodGet
-	rb.url = url
+	rb.url = rawURL
 	return rb.execute()
 }
 
 // Post executes a POST request.
-func (rb *RequestBuilder) Post(url string) (*http.Response, error) {
+func (rb *RequestBuilder) Post(rawURL string) (*http.Response, error) {
 	rb.method = http.MethodPost
-	rb.url = url
+	rb.url = rawURL
 	return rb.execute()
 }
 
 // Put executes a PUT request.
-func (rb *RequestBuilder) Put(url string) (*http.Response, error) {
+func (rb *RequestBuilder) Put(rawURL string) (*http.Response, error) {
 	rb.method = http.MethodPut
-	rb.url = url
+	rb.url = rawURL
 	return rb.execute()
 }
 
 // Patch executes a PATCH request.
-func (rb *RequestBuilder) Patch(url string) (*http.Response, error) {
+func (rb *RequestBuilder) Patch(rawURL string) (*http.Response, error) {
 	rb.method = http.MethodPatch
-	rb.url = url
+	rb.url = rawURL
 	return rb.execute()
 }
 
 // Delete executes a DELETE request.
-func (rb *RequestBuilder) Delete(url string) (*http.Response, error) {
+func (rb *RequestBuilder) Delete(rawURL string) (*http.Response, error) {
 	rb.method = http.MethodDelete
-	rb.url = url
+	rb.url = rawURL
 	return rb.execute()
 }
 
 // Head executes a HEAD request.
-func (rb *RequestBuilder) Head(url string) (*http.Response, error) {
+func (rb *RequestBuilder) Head(rawURL string) (*http.Response, error) {
 	rb.method = http.MethodHead
-	rb.url = url
+	rb.url = rawURL
 	return rb.execute()
 }
 
 // Options executes an OPTIONS request.
-func (rb *RequestBuilder) Options(url string) (*http.Response, error) {
+func (rb *RequestBuilder) Options(rawURL string) (*http.Response, error) {
 	rb.method = http.MethodOptions
-	rb.url = url
+	rb.url = rawURL
 	return rb.execute()
 }
 
 // Execute executes the request with the configured method.
-func (rb *RequestBuilder) Execute(method, url string) (*http.Response, error) {
+func (rb *RequestBuilder) Execute(method, rawURL string) (*http.Response, error) {
 	rb.method = method
-	rb.url = url
+	rb.url = rawURL
 	return rb.execute()
 }
 

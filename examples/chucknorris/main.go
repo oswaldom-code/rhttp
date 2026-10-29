@@ -146,6 +146,35 @@ func search(ctx context.Context, client *rhttp.Client, query string, limit int) 
 	return out, nil
 }
 
+// run executes the demo. It returns instead of exiting so the deferred cancel
+// runs before main decides the exit code.
+func run(client *rhttp.Client) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cats, err := categories(ctx, client)
+	if err != nil {
+		return fmt.Errorf("categories: %w", err)
+	}
+	fmt.Printf("%d categories: %v\n\n", len(cats), cats)
+
+	j, err := randomJoke(ctx, client, "dev")
+	if err != nil {
+		return fmt.Errorf("random joke: %w", err)
+	}
+	fmt.Printf("random dev joke (%s):\n  %s\n\n", j.ID, j.Value)
+
+	found, err := search(ctx, client, "compiler", 3)
+	if err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
+	fmt.Printf("search \"compiler\": %d matches, first %d:\n", found.Total, len(found.Result))
+	for _, r := range found.Result {
+		fmt.Printf("  - %s\n", r.Value)
+	}
+	return nil
+}
+
 func main() {
 	// A middleware that cannot apply its configuration falls back to a
 	// pass-through. Report it at startup instead of discovering the missing
@@ -154,32 +183,8 @@ func main() {
 		log.Printf("rhttp: %s is inert: %s", component, reason)
 	}
 
-	client := newClient()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	cats, err := categories(ctx, client)
-	if err != nil {
-		log.Printf("categories: %v", err)
+	if err := run(newClient()); err != nil {
+		log.Print(err)
 		os.Exit(1)
-	}
-	fmt.Printf("%d categories: %v\n\n", len(cats), cats)
-
-	j, err := randomJoke(ctx, client, "dev")
-	if err != nil {
-		log.Printf("random joke: %v", err)
-		os.Exit(1)
-	}
-	fmt.Printf("random dev joke (%s):\n  %s\n\n", j.ID, j.Value)
-
-	found, err := search(ctx, client, "compiler", 3)
-	if err != nil {
-		log.Printf("search: %v", err)
-		os.Exit(1)
-	}
-	fmt.Printf("search \"compiler\": %d matches, first %d:\n", found.Total, len(found.Result))
-	for _, r := range found.Result {
-		fmt.Printf("  - %s\n", r.Value)
 	}
 }
