@@ -583,7 +583,7 @@ All PRs must pass CI checks before merging.
 
 ## Roadmap
 
-> **Status:** Phase 1 is complete and v0.2.0 is the latest tag. Part of the
+> **Status:** Phase 1 is complete and v0.2.1 is the latest tag. Part of the
 > Phase 1 hardening documented above is not in that tag yet:
 > `RetryConfig.AttemptTimeout`, `CircuitBreakerConfig.OnStateChange`,
 > `CircuitBreakerWithState`, `OnInvalidConfig`, `NewTokenBucketE` and the
