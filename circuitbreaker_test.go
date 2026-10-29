@@ -900,3 +900,128 @@ func TestSharedCircuitBreaker_StateObservesTransitions(t *testing.T) {
 		t.Fatalf("expected closed after a successful probe, got %v", got)
 	}
 }
+
+type transitionRecorder struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (r *transitionRecorder) record(from, to rhttp.CircuitState) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.seen = append(r.seen, from.String()+"->"+to.String())
+}
+
+func (r *transitionRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.seen...)
+}
+
+func TestCircuitBreaker_OnStateChangeReportsHalfOpen(t *testing.T) {
+	var broken atomic.Bool
+	broken.Store(true)
+
+	rt := rhttp.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if broken.Load() {
+			return nil, errors.New("connection refused")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Request: req}, nil
+	})
+
+	rec := &transitionRecorder{}
+	breaker := rhttp.NewCircuitBreaker(rhttp.CircuitBreakerConfig{
+		FailureThreshold: 2,
+		ResetTimeout:     10 * time.Millisecond,
+		OnStateChange:    rec.record,
+	})
+
+	c := rhttp.New(rhttp.WithTransport(rt), rhttp.WithMiddleware(breaker.Middleware()))
+
+	openCircuit(t, c, 2)
+	broken.Store(false)
+	time.Sleep(30 * time.Millisecond)
+
+	// One probe: open -> half-open -> closed, all within this round trip.
+	openCircuit(t, c, 1)
+
+	if state := breaker.State(); state != rhttp.CircuitClosed {
+		t.Fatalf("expected the circuit to be closed, got %v", state)
+	}
+
+	got := rec.snapshot()
+	want := []string{"closed->open", "open->half-open", "half-open->closed"}
+
+	if len(got) != len(want) {
+		t.Fatalf("transitions = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("transition %d = %q, want %q (full: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestCircuitBreaker_OnStateChangeRunsWithLockReleased(t *testing.T) {
+	rt := rhttp.RoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("connection refused")
+	})
+
+	var breaker *rhttp.SharedCircuitBreaker
+	observed := make(chan rhttp.CircuitState, 1)
+
+	breaker = rhttp.NewCircuitBreaker(rhttp.CircuitBreakerConfig{
+		FailureThreshold: 1,
+		ResetTimeout:     time.Hour,
+		OnStateChange: func(_, _ rhttp.CircuitState) {
+			observed <- breaker.State()
+		},
+	})
+
+	c := rhttp.New(rhttp.WithTransport(rt), rhttp.WithMiddleware(breaker.Middleware()))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+		_, _ = c.Do(context.Background(), req)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request never returned: OnStateChange is holding the breaker's mutex")
+	}
+
+	select {
+	case state := <-observed:
+		if state != rhttp.CircuitOpen {
+			t.Errorf("State() inside the callback = %v, want %v", state, rhttp.CircuitOpen)
+		}
+	default:
+		t.Error("OnStateChange was never called for closed->open")
+	}
+}
+
+func TestCircuitBreakerWithState_ReturnsTheBreaker(t *testing.T) {
+	rt := rhttp.RoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("connection refused")
+	})
+
+	mw, breaker := rhttp.CircuitBreakerWithState(rhttp.CircuitBreakerConfig{
+		FailureThreshold: 1,
+		ResetTimeout:     time.Hour,
+	})
+
+	if state := breaker.State(); state != rhttp.CircuitClosed {
+		t.Fatalf("a fresh breaker should start closed, got %v", state)
+	}
+
+	c := rhttp.New(rhttp.WithTransport(rt), rhttp.WithMiddleware(mw))
+	openCircuit(t, c, 1)
+
+	if state := breaker.State(); state != rhttp.CircuitOpen {
+		t.Errorf("state = %v, want %v: the returned handle must observe the middleware "+
+			"it was created with", state, rhttp.CircuitOpen)
+	}
+}

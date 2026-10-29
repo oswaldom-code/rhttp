@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="rhttp logo">
+  <defs>
+    <linearGradient id="lbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#122036"/>
+    </linearGradient>
+    <linearGradient id="lcyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00ADD8"/>
+      <stop offset="1" stop-color="#54d9f8"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#lbg)"/>
+
+  <g transform="translate(256,256)">
+    <circle r="164" fill="none" stroke="url(#lcyan)" stroke-width="26"
+            stroke-linecap="round" stroke-dasharray="875.9 154.5"/>
+    <g transform="rotate(306)">
+      <polygon points="141,-8 187,-8 164,35 " fill="#54d9f8"/>
+    </g>
+    <path d="M -118 0 L -52 0 L -27 -64 L 15 69 L 40 0 L 118 0"
+          fill="none" stroke="#e6edf3" stroke-width="19"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

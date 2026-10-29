@@ -48,6 +48,20 @@ type CircuitBreakerConfig struct {
 	// SuccessThreshold is the number of consecutive successful probes required
 	// in Half-Open state to close the circuit. If <= 0, defaults to 1.
 	SuccessThreshold int
+
+	// OnStateChange is called after every transition. Use it to publish circuit
+	// state to logs or metrics: polling State() cannot observe a transition that
+	// completes within a single request, which is what the Half-Open phase does
+	// at the default SuccessThreshold of 1.
+	//
+	// It runs on the goroutine of the request that caused the transition, with
+	// the breaker's mutex released, so reading State() from inside is safe. It
+	// must not block: the request cannot proceed until it returns.
+	//
+	// Transitions are published in order for a single request stream. Under
+	// concurrency two transitions may be published in an order different from
+	// the one in which they occurred, because the mutex is released first.
+	OnStateChange func(from, to CircuitState)
 }
 
 func DefaultIsFailure(resp *http.Response, err error) bool {
@@ -78,6 +92,10 @@ func newCircuitBreaker(cfg CircuitBreakerConfig) *circuitBreaker {
 	return &circuitBreaker{cfg: cfg, state: CircuitClosed}
 }
 
+// CircuitBreaker returns a middleware backed by its own breaker, created on each
+// application of the middleware. The breaker itself is not returned: set
+// cfg.OnStateChange to observe its transitions, or use CircuitBreakerWithState
+// to get a handle to it.
 func CircuitBreaker(cfg CircuitBreakerConfig) Middleware {
 	return func(next http.RoundTripper) http.RoundTripper {
 		return circuitBreakerRoundTripper{next: next, cb: newCircuitBreaker(cfg)}
@@ -96,82 +114,119 @@ type circuitBreaker struct {
 	halfOpenSuccess  int
 }
 
-// allowRequest reports whether the request is admitted and returns the
-// generation under which it was admitted. Every state transition bumps the
+// stateTransition is a state change captured under the breaker's mutex, to be
+// published once it is released.
+type stateTransition struct {
+	from, to CircuitState
+}
+
+// setState moves the breaker to a new state and returns the transition for
+// publication, or nil when nobody is listening. Every transition bumps the
 // generation, so recordResult can discard results from requests that outlived
-// the state in which they were admitted.
-func (cb *circuitBreaker) allowRequest() (admitted bool, gen uint64) {
+// the state in which they were admitted. The caller holds cb.mu.
+func (cb *circuitBreaker) setState(to CircuitState) *stateTransition {
+	from := cb.state
+	cb.state = to
+	cb.generation++
+
+	if cb.cfg.OnStateChange == nil {
+		return nil
+	}
+	return &stateTransition{from: from, to: to}
+}
+
+// publish invokes OnStateChange. It must run with cb.mu released: a callback
+// that logs, records a metric or reads State() would otherwise deadlock.
+func (cb *circuitBreaker) publish(t *stateTransition) {
+	if t == nil {
+		return
+	}
+	cb.cfg.OnStateChange(t.from, t.to)
+}
+
+// tryAdmit is allowRequest's locked section: it reports whether the request is
+// admitted, the generation under which it was admitted, and the transition it
+// caused, if any.
+func (cb *circuitBreaker) tryAdmit() (admitted bool, gen uint64, t *stateTransition) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
 	switch cb.state {
 	case CircuitClosed:
-		return true, cb.generation
+		return true, cb.generation, nil
 
 	case CircuitOpen:
 		if time.Since(cb.lastFailureTime) >= cb.cfg.ResetTimeout {
-			cb.state = CircuitHalfOpen
-			cb.generation++
+			t = cb.setState(CircuitHalfOpen)
 			cb.halfOpenSuccess = 0
 			cb.halfOpenInFlight = 1
-			return true, cb.generation
+			return true, cb.generation, t
 		}
-		return false, cb.generation
+		return false, cb.generation, nil
 
 	case CircuitHalfOpen:
 		if cb.halfOpenInFlight < cb.cfg.MaxHalfOpenRequests {
 			cb.halfOpenInFlight++
-			return true, cb.generation
+			return true, cb.generation, nil
 		}
-		return false, cb.generation
+		return false, cb.generation, nil
 
 	default:
-		return true, cb.generation
+		return true, cb.generation, nil
 	}
 }
 
-func (cb *circuitBreaker) recordClosedResult(isFailure bool) {
+// allowRequest reports whether the request is admitted and returns the
+// generation under which it was admitted.
+func (cb *circuitBreaker) allowRequest() (admitted bool, gen uint64) {
+	admitted, gen, transition := cb.tryAdmit()
+	cb.publish(transition)
+	return admitted, gen
+}
+
+func (cb *circuitBreaker) recordClosedResult(isFailure bool) *stateTransition {
 	if !isFailure {
 		cb.failures = 0
-		return
+		return nil
 	}
 
 	cb.failures++
 	cb.lastFailureTime = time.Now()
 	if cb.failures >= cb.cfg.FailureThreshold {
-		cb.state = CircuitOpen
-		cb.generation++
+		return cb.setState(CircuitOpen)
 	}
+	return nil
 }
 
-func (cb *circuitBreaker) recordHalfOpenResult(isFailure bool) {
+func (cb *circuitBreaker) recordHalfOpenResult(isFailure bool) *stateTransition {
 	if cb.halfOpenInFlight > 0 {
 		cb.halfOpenInFlight--
 	}
 
 	if isFailure {
-		cb.state = CircuitOpen
-		cb.generation++
+		transition := cb.setState(CircuitOpen)
 		cb.lastFailureTime = time.Now()
 		cb.failures = cb.cfg.FailureThreshold
 		cb.halfOpenSuccess = 0
 		cb.halfOpenInFlight = 0
-		return
+		return transition
 	}
 
 	cb.halfOpenSuccess++
 	if cb.halfOpenSuccess < cb.cfg.SuccessThreshold {
-		return
+		return nil
 	}
 
-	cb.state = CircuitClosed
-	cb.generation++
+	transition := cb.setState(CircuitClosed)
 	cb.failures = 0
 	cb.halfOpenSuccess = 0
 	cb.halfOpenInFlight = 0
+	return transition
 }
 
-func (cb *circuitBreaker) recordResult(resp *http.Response, err error, gen uint64) {
+// applyResult is recordResult's locked section, returning the transition the
+// result caused, if any.
+func (cb *circuitBreaker) applyResult(resp *http.Response, err error, gen uint64) *stateTransition {
 	isFailure := cb.cfg.IsFailure(resp, err)
 
 	cb.mu.Lock()
@@ -181,15 +236,15 @@ func (cb *circuitBreaker) recordResult(resp *http.Response, err error, gen uint6
 	// was admitted no longer exists, so counting it would corrupt the current
 	// one (e.g. a slow Closed request closing a Half-Open circuit).
 	if gen != cb.generation {
-		return
+		return nil
 	}
 
 	switch cb.state {
 	case CircuitClosed:
-		cb.recordClosedResult(isFailure)
+		return cb.recordClosedResult(isFailure)
 
 	case CircuitHalfOpen:
-		cb.recordHalfOpenResult(isFailure)
+		return cb.recordHalfOpenResult(isFailure)
 
 	case CircuitOpen:
 		// Unreachable: a request is only admitted while Closed or on the
@@ -197,7 +252,15 @@ func (cb *circuitBreaker) recordResult(resp *http.Response, err error, gen uint6
 		// A result observed while the breaker sits in Open therefore carries a
 		// stale generation and was already discarded above. Kept for switch
 		// exhaustiveness.
+		return nil
+
+	default:
+		return nil
 	}
+}
+
+func (cb *circuitBreaker) recordResult(resp *http.Response, err error, gen uint64) {
+	cb.publish(cb.applyResult(resp, err, gen))
 }
 
 // State returns the current state of the circuit breaker.
@@ -253,4 +316,18 @@ func (s *SharedCircuitBreaker) Middleware() Middleware {
 // State returns the current state of the shared circuit breaker.
 func (s *SharedCircuitBreaker) State() CircuitState {
 	return s.cb.State()
+}
+
+// CircuitBreakerWithState behaves like CircuitBreaker and additionally returns
+// the breaker it built, for callers that need to reach the state machine they
+// just configured.
+//
+// To publish transitions, prefer CircuitBreakerConfig.OnStateChange: polling the
+// returned State() cannot observe a transition that completes within a single
+// request, which is what the Half-Open phase does at the default
+// SuccessThreshold of 1.
+func CircuitBreakerWithState(cfg CircuitBreakerConfig) (Middleware, *SharedCircuitBreaker) {
+	shared := NewCircuitBreaker(cfg)
+	mw := shared.Middleware()
+	return mw, shared
 }

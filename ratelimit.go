@@ -2,6 +2,7 @@ package rhttp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"sync"
@@ -34,12 +35,15 @@ type TokenBucket struct {
 // rate: requests per second allowed
 // burst: maximum burst size (bucket capacity)
 //
-// A non-positive rate or a burst below 1 is invalid configuration: the returned
-// bucket does not limit (it allows every request), following the project
-// convention that invalid config becomes a no-op rather than a busy-loop or a
-// permanent block.
+// A non-positive rate or a burst below 1 cannot produce a limiter. Rather than
+// busy-loop or block permanently, the returned bucket falls back to not
+// limiting: it allows every request. That fallback is reported through
+// OnInvalidConfig, and NewTokenBucketE returns it as an error instead.
 func NewTokenBucket(rate float64, burst int) *TokenBucket {
 	if rate <= 0 || burst < 1 {
+		reportInvalidConfig("TokenBucket", fmt.Sprintf(
+			"rate=%v burst=%d: rate must be positive and burst at least 1; the bucket does not limit",
+			rate, burst))
 		return &TokenBucket{unlimited: true}
 	}
 	return &TokenBucket{
@@ -49,6 +53,20 @@ func NewTokenBucket(rate float64, burst int) *TokenBucket {
 		lastRefill: time.Now(),
 		waitTime:   time.Duration(float64(time.Second) / rate),
 	}
+}
+
+// NewTokenBucketE is NewTokenBucket with the invalid cases reported instead of
+// silently disabled. Prefer it whenever the rate comes from configuration that
+// could be wrong: a bucket that does not limit is indistinguishable from a
+// correctly configured one until the load it was meant to shape arrives.
+//
+// The returned error wraps ErrInvalidRateLimit.
+func NewTokenBucketE(rate float64, burst int) (*TokenBucket, error) {
+	if rate <= 0 || burst < 1 {
+		return nil, fmt.Errorf("%w: rate=%v burst=%d: rate must be positive and burst at least 1",
+			ErrInvalidRateLimit, rate, burst)
+	}
+	return NewTokenBucket(rate, burst), nil
 }
 
 // WaitContext blocks until a token is available or context is canceled.
@@ -119,8 +137,12 @@ type RateLimitConfig struct {
 }
 
 // RateLimit returns a middleware that applies rate limiting to requests.
+//
+// A nil Limiter cannot rate-limit anything, so the middleware falls back to a
+// pass-through. That fallback is reported through OnInvalidConfig.
 func RateLimit(cfg RateLimitConfig) Middleware {
 	if cfg.Limiter == nil {
+		reportInvalidConfig("RateLimit", "Limiter is nil: requests are not rate-limited")
 		return func(next http.RoundTripper) http.RoundTripper {
 			return next
 		}

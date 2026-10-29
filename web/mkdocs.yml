@@ -1,0 +1,103 @@
+site_name: rhttp
+site_description: Production-grade HTTP client for Go with built-in resiliency patterns. Zero dependencies.
+site_url: https://oswaldom-code.github.io/rhttp/
+repo_url: https://github.com/oswaldom-code/rhttp
+repo_name: oswaldom-code/rhttp
+edit_uri: ""
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  icon:
+    repo: fontawesome/brands/github
+  font: false
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - content.code.copy
+    - content.tabs.link
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - Resiliency:
+      - Retry & backoff: resiliency/retry.md
+      - Circuit breaker: resiliency/circuit-breaker.md
+      - Rate limiting: resiliency/rate-limiting.md
+      - Timeouts: resiliency/timeouts.md
+  - Observability:
+      - Logging: observability/logging.md
+      - Metrics: observability/metrics.md
+      - Invalid configuration: observability/diagnostics.md
+  - Reference:
+      - Architecture: reference/architecture.md
+      - Benchmarks: reference/benchmarks.md
+      - API reference: https://pkg.go.dev/github.com/oswaldom-code/rhttp
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: suffix
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: es
+          name: Español
+          build: true
+          site_description: Cliente HTTP para Go con patrones de resiliencia integrados. Cero dependencias.
+          nav_translations:
+            Home: Inicio
+            Getting started: Primeros pasos
+            Installation: Instalación
+            Quickstart: Inicio rápido
+            Resiliency: Resiliencia
+            Retry & backoff: Reintentos y backoff
+            Circuit breaker: Circuit breaker
+            Rate limiting: Rate limiting
+            Timeouts: Timeouts
+            Observability: Observabilidad
+            Logging: Logging
+            Metrics: Métricas
+            Invalid configuration: Configuración inválida
+            Reference: Referencia
+            Architecture: Arquitectura
+            Benchmarks: Benchmarks
+            API reference: Referencia de la API
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra_css:
+  - stylesheets/extra.css

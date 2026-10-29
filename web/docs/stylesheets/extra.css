@@ -1,0 +1,115 @@
+/* rhttp theme — brand cyan from the logo, amber for breaker states, system fonts. */
+
+:root {
+  --rh-accent: #007d9c;
+  --rh-accent-soft: rgba(0, 125, 156, 0.09);
+  --rh-amber: #b97613;
+  --rh-amber-soft: rgba(185, 118, 19, 0.1);
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #007d9c;
+  --md-primary-fg-color--dark: #00647d;
+  --md-accent-fg-color: #00add8;
+  --md-typeset-a-color: #007d9c;
+  --md-default-bg-color: #f7fafb;
+}
+
+[data-md-color-scheme="slate"] {
+  --rh-accent: #54d9f8;
+  --rh-accent-soft: rgba(84, 217, 248, 0.1);
+  --rh-amber: #e3a43f;
+  --rh-amber-soft: rgba(227, 164, 63, 0.12);
+  --md-primary-fg-color: #007d9c;
+  --md-accent-fg-color: #54d9f8;
+  --md-typeset-a-color: #54d9f8;
+  --md-default-bg-color: #0b1020;
+  --md-code-bg-color: #0a0e1a;
+}
+
+/* Light header on both schemes, like the approved mockup. */
+.md-header {
+  background-color: var(--md-default-bg-color);
+  color: var(--md-default-fg-color);
+  box-shadow: 0 0 0.05rem rgba(0, 0, 0, 0.25), 0 0.05rem 0.3rem rgba(0, 0, 0, 0.08);
+}
+
+.md-header__button,
+.md-header__title,
+.md-header__topic {
+  color: var(--md-default-fg-color);
+}
+
+.md-header .md-logo img {
+  border-radius: 0.3rem;
+}
+
+.md-search__input {
+  background-color: var(--md-default-fg-color--lightest);
+  color: var(--md-default-fg-color);
+}
+
+.md-search__input::placeholder,
+.md-search__input + .md-search__icon {
+  color: var(--md-default-fg-color--light);
+}
+
+/* Home hero banner. */
+.rh-banner {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0.6rem;
+  margin: 0.4rem 0 1.4rem;
+}
+
+.rh-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Middleware chain visual (home page). */
+.rh-chain {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 0.4rem 0 0.7rem;
+}
+
+.rh-chain .mw {
+  font-family: var(--md-code-font-family, monospace);
+  font-size: 0.68rem;
+  font-weight: 500;
+  padding: 0.32rem 0.6rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  white-space: nowrap;
+}
+
+.rh-chain .mw.hot {
+  color: var(--rh-accent);
+  border-color: var(--rh-accent);
+  background: var(--rh-accent-soft);
+}
+
+.rh-chain .mw.state {
+  color: var(--rh-amber);
+  border-color: var(--rh-amber);
+  background: var(--rh-amber-soft);
+}
+
+.rh-chain .mw.end {
+  background: var(--md-default-fg-color);
+  color: var(--md-default-bg-color);
+  border-color: var(--md-default-fg-color);
+}
+
+.rh-chain .arr {
+  color: var(--md-default-fg-color--light);
+  user-select: none;
+}
