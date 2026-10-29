@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build
+    name: Docs build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
