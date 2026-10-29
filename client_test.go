@@ -112,6 +112,7 @@ func TestDo_NilContextDoesNotPanic(t *testing.T) {
 	c := rhttp.New(rhttp.WithTransport(rt))
 
 	req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+	//lint:ignore SA1012 nil ctx is the case under test
 	resp, err := c.Do(nil, req) //nolint:staticcheck // nil ctx is the case under test
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

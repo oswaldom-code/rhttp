@@ -30,3 +30,6 @@ __debug_bin*
 
 # Documentation site build output
 /web/site/
+
+# Local-only notes
+docs/
