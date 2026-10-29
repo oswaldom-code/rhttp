@@ -15,7 +15,7 @@ rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
 | --------------------- | ---------------------------------------------------------------------------- |
 | `FailureThreshold`    | Consecutive failures before the circuit opens                                |
 | `ResetTimeout`        | Time in Open state before probing (Half-Open)                                |
-| `IsFailure`           | Custom predicate; default: any error or status >= 500                        |
+| `IsFailure`           | Custom predicate; default: any error or status >= 500, except client-side rejections (cancellation, `ErrRateLimited`, `ErrCircuitOpen`) |
 | `MaxHalfOpenRequests` | Concurrent probes allowed in Half-Open (default 1 — guaranteed single probe) |
 | `SuccessThreshold`    | Consecutive successful probes required to close (default 1)                  |
 | `OnStateChange`       | Callback invoked after every transition (default: transitions unobserved)     |

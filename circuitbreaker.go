@@ -38,7 +38,7 @@ type CircuitBreakerConfig struct {
 	ResetTimeout time.Duration
 
 	// IsFailure determines if a response/error should count as a failure.
-	// If nil, any error or 5xx status code is considered a failure.
+	// If nil, DefaultIsFailure is used.
 	IsFailure func(resp *http.Response, err error) bool
 
 	// MaxHalfOpenRequests is the number of probe requests allowed concurrently
@@ -64,9 +64,19 @@ type CircuitBreakerConfig struct {
 	OnStateChange func(from, to CircuitState)
 }
 
+// DefaultIsFailure counts transport errors and 5xx responses as failures.
+// Errors that say nothing about the dependency's health are excluded: client
+// cancellations, and rejections produced by the client itself before the
+// request left — ErrRateLimited from a limiter or ErrCircuitOpen from a nested
+// breaker. Counting those would let the client trip its own circuit.
 func DefaultIsFailure(resp *http.Response, err error) bool {
 	if err != nil {
-		return Classify(err).Kind != ErrKindCanceled
+		switch Classify(err).Kind {
+		case ErrKindCanceled, ErrKindRateLimited, ErrKindCircuitOpen:
+			return false
+		default:
+			return true
+		}
 	}
 	return resp != nil && resp.StatusCode >= 500
 }

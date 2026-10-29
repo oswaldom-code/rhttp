@@ -3,6 +3,7 @@ package rhttp_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -637,6 +638,41 @@ func TestCircuitBreaker_ClientCancellationsDoNotOpenCircuit(t *testing.T) {
 
 	if _, err := rt.RoundTrip(req); errors.Is(err, rhttp.ErrCircuitOpen) {
 		t.Fatal("client cancellations opened the circuit against a healthy upstream")
+	}
+}
+
+func TestCircuitBreaker_ClientSideRejectionsDoNotOpenCircuit(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"inner rate limiter", rhttp.ErrRateLimited},
+		{"inner circuit breaker", rhttp.ErrCircuitOpen},
+		{"wrapped rate limiter", fmt.Errorf("calling users service: %w", rhttp.ErrRateLimited)},
+		{"wrapped circuit breaker", fmt.Errorf("calling users service: %w", rhttp.ErrCircuitOpen)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int32
+			rt := rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
+				FailureThreshold: 3,
+				ResetTimeout:     time.Hour,
+			})(rhttp.RoundTripperFunc(func(*http.Request) (*http.Response, error) {
+				atomic.AddInt32(&calls, 1)
+				return nil, tt.err
+			}))
+
+			req, _ := http.NewRequest(http.MethodGet, "http://example.com", http.NoBody)
+			for i := 0; i < 6; i++ {
+				_, _ = rt.RoundTrip(req)
+			}
+
+			// An open circuit would short-circuit before reaching the inner transport.
+			if got := atomic.LoadInt32(&calls); got != 6 {
+				t.Fatalf("client-side rejections opened the circuit: inner transport reached %d of 6 times", got)
+			}
+		})
 	}
 }
 

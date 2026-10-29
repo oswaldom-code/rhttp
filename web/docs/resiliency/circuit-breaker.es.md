@@ -15,7 +15,7 @@ rhttp.CircuitBreaker(rhttp.CircuitBreakerConfig{
 | --------------------- | --------------------------------------------------------------------------------- |
 | `FailureThreshold`    | Fallos consecutivos antes de que el circuito se abra                              |
 | `ResetTimeout`        | Tiempo en estado Open antes de sondear (Half-Open)                                |
-| `IsFailure`           | Predicado propio; por defecto: cualquier error o estado >= 500                    |
+| `IsFailure`           | Predicado propio; por defecto: cualquier error o estado >= 500, salvo rechazos del propio cliente (cancelación, `ErrRateLimited`, `ErrCircuitOpen`) |
 | `MaxHalfOpenRequests` | Sondas concurrentes permitidas en Half-Open (por defecto 1 — sonda única garantizada) |
 | `SuccessThreshold`    | Sondas exitosas consecutivas necesarias para cerrar (por defecto 1)               |
 | `OnStateChange`       | Callback invocado tras cada transición (por defecto: transiciones no observadas)  |

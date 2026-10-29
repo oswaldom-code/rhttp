@@ -7,8 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Four reported issues closed. Every change is additive and backward
-compatible: no existing behavior changes unless a new field or hook is set.
+Four reported issues closed. Every addition is backward compatible: no
+existing behavior changes unless a new field or hook is set. The one behavior
+change is a fix to `DefaultIsFailure`, listed under Fixed.
 
 ### Added
 
@@ -24,6 +25,10 @@ compatible: no existing behavior changes unless a new field or hook is set.
 
 - Doc comments for `Timeout`, `RateLimit` and `NewTokenBucket` now describe the no-op as a fallback rather than a project convention, and point at `OnInvalidConfig`. The previous wording read as a design principle, which is the part that surprised.
 - `RetryConfig.MaxAttempts` documents that a context deadline bounds the operation, not each attempt, and points at `AttemptTimeout`.
+
+### Fixed
+
+- `DefaultIsFailure` no longer counts `ErrRateLimited` and `ErrCircuitOpen` as failures of the dependency. Both are rejections produced by the client before the request leaves, so with `RateLimit` inside `CircuitBreaker`, or with nested breakers, the client could trip its own circuit against a healthy upstream. They are now treated like client cancellations already were. The recommended middleware order was not affected. A custom `IsFailure` keeps whatever verdict it returns.
 
 ### Performance
 
