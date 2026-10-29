@@ -526,6 +526,35 @@ Full methodology and reproduction steps: [`benchmarks/REPORT.md`](benchmarks/REP
 5. **Testable** - All components are mockable
 6. **Zero dependencies** - Only Go standard library
 
+## Examples
+
+Runnable programs live in [`examples/`](examples). Most of them hit endpoints
+that fail on purpose — [httpbin](https://httpbin.org)'s `/status/{code}` and
+`/delay/{n}`, and [badssl.com](https://badssl.com) — so each resiliency
+pattern can be watched reacting to a real failure.
+
+| Example | What it shows |
+|---|---|
+| [`basic`](examples/basic) | Fluent API: query and path params, JSON body, headers |
+| [`chucknorris`](examples/chucknorris) | Full production wiring against a public API |
+| [`retry`](examples/retry) | Flaky 503s retried to success, attempts exhausted, 500 and POST not retried |
+| [`timeout`](examples/timeout) | Total budget, per-request `SetTimeout`, and `AttemptTimeout` with retries |
+| [`circuitbreaker`](examples/circuitbreaker) | closed → open → half-open → closed, with fast rejections that never reach the network |
+| [`ratelimit`](examples/ratelimit) | Token bucket waiting vs failing fast, and server-side 429 retried |
+| [`errorclass`](examples/errorclass) | `Classify` on DNS, connection, TLS, timeout and cancellation errors |
+
+```bash
+go run ./examples/retry
+```
+
+httpbin.org is itself occasionally slow or unavailable. The failure-driven
+examples read `HTTPBIN_URL`, so they can run against a local instance instead:
+
+```bash
+docker run --rm -p 8080:8080 mccutchen/go-httpbin
+HTTPBIN_URL=http://localhost:8080 go run ./examples/retry
+```
+
 ## API Reference
 
 See [pkg.go.dev](https://pkg.go.dev/github.com/oswaldom-code/rhttp) for full API documentation.
