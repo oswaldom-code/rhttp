@@ -32,4 +32,4 @@ __debug_bin*
 /web/site/
 
 # Local-only notes
-docs/
+/docs/
